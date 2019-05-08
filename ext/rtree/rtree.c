@@ -228,7 +228,10 @@ struct RtreeSearchPoint {
 */
 #define RTREE_MINCELLS(p) ((((p)->iNodeSize-4)/(p)->nBytesPerCell)/3)
 #define RTREE_REINSERT(p) RTREE_MINCELLS(p)
-#define RTREE_MAXCELLS 51
+
+// FIXME: change the RTREE_MAXCELLS for testing
+//#define RTREE_MAXCELLS 51
+#define RTREE_MAXCELLS 5
 
 /*
 ** The smallest possible node-size is (512-64)==448 bytes. And the largest
@@ -3642,11 +3645,12 @@ static int getNodeSize(
     rc = getIntFromStmt(db, zSql, &pRtree->iNodeSize);
     if( rc!=SQLITE_OK ){
       *pzErr = sqlite3_mprintf("%s", sqlite3_errmsg(db));
-    }else if( pRtree->iNodeSize<(512-64) ){
-      rc = SQLITE_CORRUPT_VTAB;
-      RTREE_IS_CORRUPT(pRtree);
-      *pzErr = sqlite3_mprintf("undersize RTree blobs in \"%q_node\"",
-                               pRtree->zName);
+      // fixme: changed node size
+//    }else if( pRtree->iNodeSize<(512-64) ){
+//      rc = SQLITE_CORRUPT_VTAB;
+//      RTREE_IS_CORRUPT(pRtree);
+//      *pzErr = sqlite3_mprintf("undersize RTree blobs in \"%q_node\"",
+//                               pRtree->zName);
     }
   }
 
