@@ -66,6 +66,7 @@
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
+#include <sqliteInt.h>
 
 #ifndef SQLITE_AMALGAMATION
 #include "sqlite3rtree.h"
@@ -320,6 +321,11 @@ struct RtreeConstraint {
 #define RTREE_QUERY 0x47  /* G: New-style sqlite3_rtree_query_callback() */
 
 
+/*
+ * NOTES by Yihe
+ *
+ * Nodes In-memory data structure
+ */
 /* 
 ** An rtree structure node.
 */
@@ -1446,6 +1452,15 @@ static RtreeSearchPoint *rtreeSearchPointNew(
       pNew = rtreeEnqueue(pCur, rScore, iLevel);
       if( pNew==0 ) return 0;
       ii = (int)(pNew - pCur->aPoint) + 1;
+
+      /*
+       * NOTES by Yihe
+       *
+       * logic for updating the cache
+       * - free the first position (why?)
+       * - why the cache is so small (only 5)
+       */
+
       if( ii<RTREE_CACHE_SZ ){
         assert( pCur->aNode[ii]==0 );
         pCur->aNode[ii] = pCur->aNode[0];
@@ -1464,7 +1479,12 @@ static RtreeSearchPoint *rtreeSearchPointNew(
   }
 }
 
-#if 0
+/*
+ * NOTES by Yihe
+ *
+ * debug tree
+ */
+#if 1
 /* Tracing routines for the RtreeSearchPoint queue */
 static void tracePoint(RtreeSearchPoint *p, int idx, RtreeCursor *pCur){
   if( idx<0 ){ printf(" s"); }else{ printf("%2d", idx); }
@@ -1772,6 +1792,10 @@ static int rtreeFilter(
   rtreeReference(pRtree);
 
   /* Reset the cursor to the same state as rtreeOpen() leaves it in. */
+  /*
+   * NOTEs by Yihe
+   * Why do we need to reset the cursor?
+   */
   freeCursorConstraints(pCsr);
   sqlite3_free(pCsr->aPoint);
   pStmt = pCsr->pReadAux;
@@ -1922,6 +1946,12 @@ static int rtreeBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
     if( bMatch==0 && p->usable 
      && p->iColumn==0 && p->op==SQLITE_INDEX_CONSTRAINT_EQ 
     ){
+      /* NOTEs by Yihe
+       *
+       * Column constrained.  -1 for ROWID
+       * Why the if statement is `iColumn==0`
+       */
+
       /* We have an equality constraint on the rowid. Use strategy 1. */
       int jj;
       for(jj=0; jj<ii; jj++){
@@ -3183,6 +3213,13 @@ static int rtreeUpdate(
       }
     }
 
+    /*
+     * NOTES by Yihe
+     *
+     * why do we check aData[2] instead of aData[1]?
+     * which one is the row id
+     */
+
     /* If a rowid value was supplied, check if it is already present in 
     ** the table. If so, the constraint has failed. */
     if( sqlite3_value_type(aData[2])!=SQLITE_NULL ){
@@ -3523,6 +3560,11 @@ static int rtreeSqlInit(
       }
       sqlite3_str_appendf(p, " WHERE rowid=?1");
       zSql = sqlite3_str_finish(p);
+      /*
+       * NOTES by Yihe
+       *
+       * UPDATE "main"."demo_index2_rowid"SET a0=?2,a1=?3,a2=?4 WHERE rowid=?1
+       */
       if( zSql==0 ){
         rc = SQLITE_NOMEM;
       }else{
@@ -3677,6 +3719,18 @@ static int rtreeInit(
   ** the r-tree table schema.
   */
   pSql = sqlite3_str_new(db);
+  /*
+   * NOTES by Yihe
+   *
+   * CREATE VIRTUAL TABLE demo_index USING rtree(
+   *    id,              -- Integer primary key
+   *    minX, maxX,      -- Minimum and maximum X coordinate
+   *    minY, maxY       -- Minimum and maximum Y coordinate
+   * );
+   *               Db      Name
+   *               |        |
+   * argv: rtree, main, demo_index, id, minX, maxX, minY, maxY
+   */
   sqlite3_str_appendf(pSql, "CREATE TABLE x(%s", argv[3]);
   for(ii=4; ii<argc; ii++){
     if( argv[ii][0]=='+' ){
