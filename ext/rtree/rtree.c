@@ -68,6 +68,8 @@
 #include <stdio.h>
 #include <sqliteInt.h>
 
+#include <float.h>
+
 #ifndef SQLITE_AMALGAMATION
 #include "sqlite3rtree.h"
 typedef sqlite3_int64 i64;
@@ -350,6 +352,8 @@ struct RtreeNode {
 struct RtreeCell {
   i64 iRowid;                                 /* Node or entry ID */
   RtreeCoord aCoord[RTREE_MAX_DIMENSIONS*2];  /* Bounding box coordinates */
+  // XXX: rplus tree bounding cuts
+  RtreeCoord aCoordCut[RTREE_MAX_DIMENSIONS*2];  /* Bounding box coordinates */
 };
 
 
@@ -789,6 +793,9 @@ static void nodeOverwriteCell(
   for(ii=0; ii<pRtree->nDim2; ii++){
     p += writeCoord(p, &pCell->aCoord[ii]);
   }
+  for(ii=0; ii<pRtree->nDim2; ii++){
+    p += writeCoord(p, &pCell->aCoordCut[ii]);
+  }
   pNode->isDirty = 1;
 }
 
@@ -923,13 +930,22 @@ static void nodeGetCell(
 ){
   u8 *pData;
   RtreeCoord *pCoord;
+  RtreeCoord *pCoordCut;
   int ii = 0;
   pCell->iRowid = nodeGetRowid(pRtree, pNode, iCell);
   pData = pNode->zData + (12 + pRtree->nBytesPerCell*iCell);
   pCoord = pCell->aCoord;
+  pCoordCut = pCell->aCoordCut;
   do{
     readCoord(pData, &pCoord[ii]);
     readCoord(pData+4, &pCoord[ii+1]);
+    pData += 8;
+    ii += 2;
+  }while( ii<pRtree->nDim2 );
+  ii = 0;
+  do{
+    readCoord(pData, &pCoordCut[ii]);
+    readCoord(pData+4, &pCoordCut[ii+1]);
     pData += 8;
     ii += 2;
   }while( ii<pRtree->nDim2 );
@@ -2064,13 +2080,17 @@ static void cellUnion(Rtree *pRtree, RtreeCell *p1, RtreeCell *p2){
   if( pRtree->eCoordType==RTREE_COORD_REAL32 ){
     do{
       p1->aCoord[ii].f = MIN(p1->aCoord[ii].f, p2->aCoord[ii].f);
+      p1->aCoord[ii].f = MAX(p1->aCoord[ii].f, p1->aCoordCut[ii].f);
       p1->aCoord[ii+1].f = MAX(p1->aCoord[ii+1].f, p2->aCoord[ii+1].f);
+      p1->aCoord[ii+1].f = MIN(p1->aCoord[ii+1].f, p1->aCoordCut[ii+1].f);
       ii += 2;
     }while( ii<pRtree->nDim2 );
   }else{
     do{
       p1->aCoord[ii].i = MIN(p1->aCoord[ii].i, p2->aCoord[ii].i);
+      p1->aCoord[ii].i = MAX(p1->aCoord[ii].i, p1->aCoordCut[ii].i);
       p1->aCoord[ii+1].i = MAX(p1->aCoord[ii+1].i, p2->aCoord[ii+1].i);
+      p1->aCoord[ii+1].i = MIN(p1->aCoord[ii+1].i, p1->aCoordCut[ii+1].i);
       ii += 2;
     }while( ii<pRtree->nDim2 );
   }
@@ -3216,6 +3236,25 @@ static int rtreeUpdate(
       }
     }
 
+#ifndef SQLITE_RTREE_INT_ONLY
+    if( pRtree->eCoordType==RTREE_COORD_REAL32 ) {
+      for (ii = 0; ii < pRtree->nDim2; ii += 2) {
+//        cell.aCoordCut[ii].f = FLT_MIN;
+//        cell.aCoordCut[ii + 1].f = FLT_MAX;
+        cell.aCoordCut[ii].f = -99;
+        cell.aCoordCut[ii + 1].f = 99;
+      }
+    } else
+#endif
+    {
+      for (ii = 0; ii < pRtree->nDim2; ii += 2) {
+//        cell.aCoordCut[ii].i = INT32_MIN;
+//        cell.aCoordCut[ii + 1].i = INT32_MAX;
+        cell.aCoordCut[ii].i = -99;
+        cell.aCoordCut[ii + 1].i = 99;
+      }
+    }
+
     /*
      * NOTES by Yihe
      *
@@ -3773,7 +3812,7 @@ static int rtreeInit(
     *pzErr = sqlite3_mprintf("%s", aErrMsg[iErr]);
     goto rtreeInit_fail;
   }
-  pRtree->nBytesPerCell = 8 + pRtree->nDim2*4;
+  pRtree->nBytesPerCell = 8 + pRtree->nDim2 * 4 * 2;
 
   /* Figure out the node size to use. */
   rc = getNodeSize(db, pRtree, isCreate, pzErr);
@@ -3826,7 +3865,7 @@ static void rtreenode(sqlite3_context *ctx, int nArg, sqlite3_value **apArg){
   tree.nDim = (u8)sqlite3_value_int(apArg[0]);
   if( tree.nDim<1 || tree.nDim>5 ) return;
   tree.nDim2 = tree.nDim*2;
-  tree.nBytesPerCell = 8 + 8 * tree.nDim;
+  tree.nBytesPerCell = 8 + 8 * tree.nDim * 2;
   node.zData = (u8 *)sqlite3_value_blob(apArg[1]);
   nData = sqlite3_value_bytes(apArg[1]);
   if( nData<4 ) return;
@@ -3845,6 +3884,13 @@ static void rtreenode(sqlite3_context *ctx, int nArg, sqlite3_value **apArg){
       sqlite3_str_appendf(pOut, " %g", (double)cell.aCoord[jj].f);
 #else
       sqlite3_str_appendf(pOut, " %d", cell.aCoord[jj].i);
+#endif
+    }
+    for(jj=0; jj<tree.nDim2; jj++){
+#ifndef SQLITE_RTREE_INT_ONLY
+      sqlite3_str_appendf(pOut, " %g", (double)cell.aCoordCut[jj].f);
+#else
+      sqlite3_str_appendf(pOut, " %d", cell.aCoordCut[jj].i);
 #endif
     }
     sqlite3_str_append(pOut, "}", 1);

@@ -1,8 +1,11 @@
 #include <stdio.h>
-#include <sqlite3.h>
+#include "sqlite3.h"
+
+// gcc script.c -DSQLITE_ENABLE_RTREE sqlite3.h sqlite3.c
 
 int main(int argc, char **argv) {
   sqlite3 *db;
+  int rc;
   char *err_msg = 0;
 
   rc = sqlite3_open("test.db", &db);
@@ -12,7 +15,7 @@ int main(int argc, char **argv) {
     return(1);
   }
 
-  char *sql = "drop table if exists rtree_test;"
+  char *sql = "drop table if exists demo_index;"
     "CREATE VIRTUAL TABLE demo_index USING rtree(id, minX, maxX, minY, maxY);"
     "INSERT INTO demo_index VALUES(1, 1, 2, 3, 4);"
     "INSERT INTO demo_index VALUES(2, 0, 1, 1, 2);"
