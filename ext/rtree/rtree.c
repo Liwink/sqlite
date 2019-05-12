@@ -2214,6 +2214,56 @@ static int ChooseLeaf(
   return rc;
 }
 
+static int rtreeInsertCell(Rtree *pRtree, RtreeNode *pNode, RtreeCell *pCell, int iHeight);
+
+/*
+** Insert the cell to all overlapped leaves
+*/
+static int ChooseLeavesInsertCell(
+        Rtree *pRtree,               /* Rtree table */
+        RtreeCell *pCell,            /* Cell to insert into rtree */
+        int iHeight,                 /* Height of sub-tree rooted at pCell */
+        RtreeNode *pNode             /* Node to be added */
+){
+  int rc;
+
+  if (pRtree->iDepth - iHeight == 0) {
+    rc = rtreeInsertCell(pRtree, pNode, pCell, 0);
+  } else {
+
+    int iCell;
+
+    int nCell = NCELL(pNode);
+    RtreeCell cell;
+    RtreeNode *pChild;
+
+    RtreeCell *aCell = 0;
+
+    for (iCell = 0; iCell < nCell; iCell++) {
+      RtreeDValue overlap;
+
+      nodeGetCell(pRtree, pNode, iCell, &cell);
+
+      overlap = cellOverlap(pRtree, &cell, pCell, 1);
+
+      if (overlap != RTREE_ZERO) {
+        rc = nodeAcquire(pRtree, cell.iRowid, pNode, &pChild);
+        if (rc == SQLITE_OK) {
+          rc = ChooseLeavesInsertCell(pRtree, pCell, iHeight + 1, pChild);
+        }
+        nodeRelease(pRtree, pChild);
+        if (rc != SQLITE_OK) {
+          break;
+        }
+      }
+    }
+
+    sqlite3_free(aCell);
+  }
+
+  return rc;
+}
+
 /*
 ** A cell with the same content as pCell has just been inserted into
 ** the node pNode. This function updates the bounding box cells in
@@ -2966,12 +3016,13 @@ static int rtreeInsertCell(
     }
   }
   if( nodeInsertCell(pRtree, pNode, pCell) ){
-    if( iHeight<=pRtree->iReinsertHeight || pNode->iNode==1){
-      rc = SplitNode(pRtree, pNode, pCell, iHeight);
-    }else{
-      pRtree->iReinsertHeight = iHeight;
-      rc = Reinsert(pRtree, pNode, pCell, iHeight);
-    }
+    rc = SplitNode(pRtree, pNode, pCell, iHeight);
+//    if( iHeight<=pRtree->iReinsertHeight || pNode->iNode==1){
+//      rc = SplitNode(pRtree, pNode, pCell, iHeight);
+//    }else{
+//      pRtree->iReinsertHeight = iHeight;
+//      rc = Reinsert(pRtree, pNode, pCell, iHeight);
+//    }
   }else{
     rc = AdjustTree(pRtree, pNode, pCell);
     if( rc==SQLITE_OK ){
@@ -3335,18 +3386,28 @@ static int rtreeUpdate(
     }
     *pRowid = cell.iRowid;
 
-    if( rc==SQLITE_OK ){
-      rc = ChooseLeaf(pRtree, &cell, 0, &pLeaf);
+    RtreeNode *pNode = 0;
+    if (rc == SQLITE_OK) {
+      rc = nodeAcquire(pRtree, 1, 0, &pNode);
     }
-    if( rc==SQLITE_OK ){
-      int rc2;
-      pRtree->iReinsertHeight = -1;
-      rc = rtreeInsertCell(pRtree, pLeaf, &cell, 0);
-      rc2 = nodeRelease(pRtree, pLeaf);
-      if( rc==SQLITE_OK ){
-        rc = rc2;
-      }
+    if (rc == SQLITE_OK) {
+      rc = ChooseLeavesInsertCell(pRtree, &cell, 0, pNode);
+      nodeRelease(pRtree, pNode);
     }
+
+//    if( rc==SQLITE_OK ){
+//      rc = ChooseLeaf(pRtree, &cell, 0, &pLeaf);
+//    }
+//    if( rc==SQLITE_OK ){
+//      int rc2;
+//      pRtree->iReinsertHeight = -1;
+//      rc = rtreeInsertCell(pRtree, pLeaf, &cell, 0);
+//      rc2 = nodeRelease(pRtree, pLeaf);
+//      if( rc==SQLITE_OK ){
+//        rc = rc2;
+//      }
+//    }
+    // how to deal with rollback
     if( rc==SQLITE_OK && pRtree->nAux ){
       sqlite3_stmt *pUp = pRtree->pWriteAux;
       int jj;
