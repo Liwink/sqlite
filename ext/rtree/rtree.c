@@ -2575,6 +2575,12 @@ static int splitNodeStartree(
   pBboxLeft->aCoordCut[iBestDim * 2 + 1] = iBestCut;
   pBboxRight->aCoordCut[iBestDim * 2] = iBestCut;
   for (ii = 0; ii < nCell; ii++) {
+    /*
+     * if the right side < cut: insert to the left
+     * else if the left side > cut: insert to the right
+     * else if it's a leaf(iHeight == 0): insert to both nodes
+     * else split the cell and insert the new cells into corresponding nodes
+     * */
     RtreeNode *pTarget = (ii < iBestSplit) ? pLeft : pRight;
     RtreeCell *pBbox = (ii < iBestSplit) ? pBboxLeft : pBboxRight;
     RtreeCell *pCell = &aCell[aaSorted[iBestDim][ii]];
