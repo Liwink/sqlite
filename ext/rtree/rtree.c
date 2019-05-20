@@ -2460,9 +2460,9 @@ static void SortByDimension(
 }
 
 /*
-** Implementation of the R*-tree variant of SplitNode from Beckman[1990].
+** Implementation of the R+-tree variant of SplitNode from Beckman[1990].
 */
-static int splitNodeStartree(
+static int splitNodePlustree(
   Rtree *pRtree,
   RtreeCell *aCell,
   int nCell,
@@ -2592,6 +2592,167 @@ static int splitNodeStartree(
   return SQLITE_OK;
 }
 
+static int SplitNodeNew(
+        Rtree *pRtree,
+        RtreeNode *pNode,
+        RtreeCell *pCell,
+        RtreeNode *ppLeft,
+        RtreeNode *ppRight,
+        RtreeCoord *cut,
+        int dim,
+        int iHeight
+);
+
+static int getSplitCut(
+        Rtree *pRtree,
+        RtreeCell *aCell,
+        int nCell,
+        RtreeCoord *bestCut
+) {
+  int **aaSorted;
+  int *aSpare;
+  int ii;
+  int bestDim = 0;
+
+  RtreeDValue fBestArea = RTREE_ZERO;
+
+  sqlite3_int64 nByte = (pRtree->nDim + 1) * (sizeof(int *) + nCell * sizeof(int));
+
+  aaSorted = (int **) sqlite3_malloc64(nByte);
+  if (!aaSorted) {
+    return SQLITE_NOMEM;
+  }
+
+  aSpare = &((int *) &aaSorted[pRtree->nDim])[pRtree->nDim * nCell];
+  memset(aaSorted, 0, nByte);
+  for (ii = 0; ii < pRtree->nDim; ii++) {
+    int jj;
+    aaSorted[ii] = &((int *) &aaSorted[pRtree->nDim])[ii * nCell];
+    for (jj = 0; jj < nCell; jj++) {
+      aaSorted[ii][jj] = jj;
+    }
+    SortByDimension(pRtree, aaSorted[ii], nCell, ii, aCell, aSpare);
+  }
+
+  for (ii = 0; ii < pRtree->nDim; ii++) {
+    RtreeDValue margin = RTREE_ZERO;
+    int nLeft;
+
+    RtreeCell *tCell;
+    RtreeCoord cut;
+
+    for (
+            nLeft = RTREE_MINCELLS(pRtree);
+            nLeft <= (nCell - RTREE_MINCELLS(pRtree));
+            nLeft++
+            ) {
+      RtreeCell left;
+      RtreeCell right;
+      int kk;
+      RtreeDValue area;
+
+      memcpy(&left, &aCell[aaSorted[ii][0]], sizeof(RtreeCell));
+      memcpy(&right, &aCell[aaSorted[ii][nCell - 1]], sizeof(RtreeCell));
+
+      cut = aCell[aaSorted[ii][nLeft]].aCoord[ii * 2];
+      left.aCoordCut[ii * 2 + 1] = cut;
+      right.aCoordCut[ii * 2] = cut;
+
+
+      for (kk = 1; kk < (nCell - 1); kk++) {
+        tCell = &aCell[aaSorted[ii][kk]];
+        if (DCOORD(tCell->aCoord[ii * 2 + 1]) <= DCOORD(cut)) {
+          cellUnion(pRtree, &left, &aCell[aaSorted[ii][kk]]);
+        } else if (DCOORD(tCell->aCoord[ii * 2]) >= DCOORD(cut)) {
+          cellUnion(pRtree, &right, &aCell[aaSorted[ii][kk]]);
+        } else {
+          cellUnion(pRtree, &left, &aCell[aaSorted[ii][kk]]);
+          cellUnion(pRtree, &right, &aCell[aaSorted[ii][kk]]);
+        }
+      }
+
+      // todo: how to calculate the cost
+      // here, we only choose the one with the minimal area
+      area = cellArea(pRtree, &left) + cellArea(pRtree, &right);
+      if ((ii == 0 && nLeft == RTREE_MINCELLS(pRtree))
+          || (area < fBestArea)
+              ) {
+        fBestArea = area;
+        *bestCut = cut;
+        bestDim = ii;
+      }
+    }
+
+  }
+
+
+  sqlite3_free(aaSorted);
+  return bestDim;
+}
+
+static int splitNodeByCut(
+        Rtree *pRtree,
+        RtreeCell *aCell,
+        int nCell,
+        int cutDim,
+        RtreeCoord cutCoord,
+        RtreeNode *pLeft,
+        RtreeNode *pRight,
+        RtreeCell *pBboxLeft,
+        RtreeCell *pBboxRight,
+        RtreeNode *pNode,
+        int iHeight
+) {
+  int ii;
+  double cut = DCOORD(cutCoord);
+
+  int isLeftEmpty = 1;
+  int isRightEmpty = 1;
+
+  for (ii = 0; ii < nCell; ii++) {
+    /*
+     * if the right side < cut: insert to the left
+     * else if the left side > cut: insert to the right
+     * else if it's a leaf(iHeight == 0): insert to both nodes
+     * else split the cell and insert the new cells into corresponding nodes
+     * */
+    RtreeCell *pCell = &aCell[ii];
+
+    if (DCOORD(pCell->aCoord[cutDim * 2 + 1]) <= cut) {
+      if (isLeftEmpty == 1) {
+        isLeftEmpty = 0;
+        memcpy(pBboxLeft, pCell, sizeof(RtreeCell));
+        pBboxLeft->aCoordCut[cutDim * 2 + 1] = cutCoord;
+      }
+      nodeInsertCell(pRtree, pLeft, pCell);
+      cellUnion(pRtree, pBboxLeft, pCell);
+    } else if (DCOORD(pCell->aCoord[cutDim * 2]) >= cut) {
+      if (isRightEmpty == 1) {
+        isRightEmpty = 0;
+        memcpy(pBboxRight, pCell, sizeof(RtreeCell));
+        pBboxRight->aCoordCut[cutDim * 2] = cutCoord;
+      }
+      nodeInsertCell(pRtree, pRight, pCell);
+      cellUnion(pRtree, pBboxRight, pCell);
+    } else if (iHeight == 0) {
+      nodeInsertCell(pRtree, pLeft, pCell);
+      cellUnion(pRtree, pBboxLeft, pCell);
+      nodeInsertCell(pRtree, pRight, pCell);
+      cellUnion(pRtree, pBboxRight, pCell);
+    } else {
+      RtreeNode *cNode;
+      int rc = nodeAcquire(pRtree, pCell->iRowid, pNode, &cNode);
+      if (rc != SQLITE_OK) {
+        return rc;
+      }
+      SplitNodeNew(pRtree, cNode, NULL, pLeft, pRight,
+              &cutCoord, cutDim, iHeight-1);
+    }
+
+  }
+
+  return SQLITE_OK;
+}
 
 static int updateMapping(
   Rtree *pRtree, 
@@ -2612,11 +2773,163 @@ static int updateMapping(
   return xSetMapping(pRtree, iRowid, pNode->iNode);
 }
 
-static int SplitNode(
+static int SplitNodeNew(
   Rtree *pRtree,
   RtreeNode *pNode,
   RtreeCell *pCell,
+  RtreeNode *ppLeft,
+  RtreeNode *ppRight,
+  RtreeCoord *cut,
+  int dim,
   int iHeight
+){
+  int i;
+  int newCellIsRight = 0;
+
+  int rc = SQLITE_OK;
+  int nCell = NCELL(pNode);
+  int isANewCell = pCell ? 1: 0;
+  RtreeCell *aCell;
+  int *aiUsed;
+
+  RtreeNode *pLeft = 0;
+  RtreeNode *pRight = 0;
+
+  RtreeCell leftbbox;
+  RtreeCell rightbbox;
+
+  /* Allocate an array and populate it with a copy of pCell and 
+  ** all cells from node pLeft. Then zero the original node.
+  */
+  aCell = sqlite3_malloc64((sizeof(RtreeCell)+sizeof(int))*(nCell+isANewCell));
+  if( !aCell ){
+    rc = SQLITE_NOMEM;
+    goto splitnode_out;
+  }
+  aiUsed = (int *)&aCell[nCell+isANewCell];
+  memset(aiUsed, 0, sizeof(int)*(nCell+isANewCell));
+  for(i=0; i<nCell; i++){
+    nodeGetCell(pRtree, pNode, i, &aCell[i]);
+  }
+  nodeZero(pRtree, pNode);
+  if (isANewCell) {
+    memcpy(&aCell[nCell], pCell, sizeof(RtreeCell));
+    nCell++;
+  }
+
+  if( pNode->iNode==1 ){
+    pRight = nodeNew(pRtree, pNode);
+    pLeft = nodeNew(pRtree, pNode);
+    pRtree->iDepth++;
+    pNode->isDirty = 1;
+    writeInt16(pNode->zData, pRtree->iDepth);
+  }else{
+    pLeft = pNode;
+//    pRight = nodeNew(pRtree, pLeft->pParent);
+    pRight = nodeNew(pRtree, ppRight);
+    pLeft->nRef++;
+  }
+
+  if( !pLeft || !pRight ){
+    rc = SQLITE_NOMEM;
+    goto splitnode_out;
+  }
+
+  memset(pLeft->zData, 0, pRtree->iNodeSize);
+  memset(pRight->zData, 0, pRtree->iNodeSize);
+
+  if (!cut) {
+    cut = sqlite3_malloc64(sizeof(RtreeCoord));
+    dim = getSplitCut(pRtree, aCell, nCell, cut);
+  }
+
+  rc = splitNodeByCut(pRtree, aCell, nCell, dim, *cut,
+                      pLeft, pRight, &leftbbox, &rightbbox,
+                      pNode, iHeight);
+
+//  rc = splitNodePlustree(pRtree, aCell, nCell, pLeft, pRight,
+//                         &leftbbox, &rightbbox);
+  if( rc!=SQLITE_OK ){
+    goto splitnode_out;
+  }
+
+  /* Ensure both child nodes have node numbers assigned to them by calling
+  ** nodeWrite(). Node pRight always needs a node number, as it was created
+  ** by nodeNew() above. But node pLeft sometimes already has a node number.
+  ** In this case avoid the all to nodeWrite().
+  */
+  if( SQLITE_OK!=(rc = nodeWrite(pRtree, pRight))
+   || (0==pLeft->iNode && SQLITE_OK!=(rc = nodeWrite(pRtree, pLeft)))
+  ){
+    goto splitnode_out;
+  }
+
+  rightbbox.iRowid = pRight->iNode;
+  leftbbox.iRowid = pLeft->iNode;
+
+  if( pNode->iNode==1 ){
+    rc = rtreeInsertCell(pRtree, pLeft->pParent, &leftbbox, iHeight+1);
+    if( rc!=SQLITE_OK ){
+      goto splitnode_out;
+    }
+  }else{
+    int iCell;
+    rc = nodeParentIndex(pRtree, pLeft, &iCell);
+    if( rc==SQLITE_OK ){
+      nodeOverwriteCell(pRtree, ppLeft, &leftbbox, iCell);
+      rc = AdjustTree(pRtree, ppLeft, &leftbbox);
+    }
+    if( rc!=SQLITE_OK ){
+      goto splitnode_out;
+    }
+  }
+  if( (rc = rtreeInsertCell(pRtree, pRight->pParent, &rightbbox, iHeight+1)) ){
+    goto splitnode_out;
+  }
+
+  for(i=0; i<NCELL(pRight); i++){
+    i64 iRowid = nodeGetRowid(pRtree, pRight, i);
+    rc = updateMapping(pRtree, iRowid, pRight, iHeight);
+    if( iRowid==pCell->iRowid ){
+      newCellIsRight = 1;
+    }
+    if( rc!=SQLITE_OK ){
+      goto splitnode_out;
+    }
+  }
+  if( pNode->iNode==1 ){
+    for(i=0; i<NCELL(pLeft); i++){
+      i64 iRowid = nodeGetRowid(pRtree, pLeft, i);
+      rc = updateMapping(pRtree, iRowid, pLeft, iHeight);
+      if( rc!=SQLITE_OK ){
+        goto splitnode_out;
+      }
+    }
+  }else if( newCellIsRight==0 ){
+    rc = updateMapping(pRtree, pCell->iRowid, pLeft, iHeight);
+  }
+
+  if( rc==SQLITE_OK ){
+    rc = nodeRelease(pRtree, pRight);
+    pRight = 0;
+  }
+  if( rc==SQLITE_OK ){
+    rc = nodeRelease(pRtree, pLeft);
+    pLeft = 0;
+  }
+
+splitnode_out:
+  nodeRelease(pRtree, pRight);
+  nodeRelease(pRtree, pLeft);
+  sqlite3_free(aCell);
+  return rc;
+}
+
+static int SplitNode(
+        Rtree *pRtree,
+        RtreeNode *pNode,
+        RtreeCell *pCell,
+        int iHeight
 ){
   int i;
   int newCellIsRight = 0;
@@ -2632,7 +2945,7 @@ static int SplitNode(
   RtreeCell leftbbox;
   RtreeCell rightbbox;
 
-  /* Allocate an array and populate it with a copy of pCell and 
+  /* Allocate an array and populate it with a copy of pCell and
   ** all cells from node pLeft. Then zero the original node.
   */
   aCell = sqlite3_malloc64((sizeof(RtreeCell)+sizeof(int))*(nCell+1));
@@ -2669,7 +2982,7 @@ static int SplitNode(
   memset(pLeft->zData, 0, pRtree->iNodeSize);
   memset(pRight->zData, 0, pRtree->iNodeSize);
 
-  rc = splitNodeStartree(pRtree, aCell, nCell, pLeft, pRight,
+  rc = splitNodePlustree(pRtree, aCell, nCell, pLeft, pRight,
                          &leftbbox, &rightbbox);
   if( rc!=SQLITE_OK ){
     goto splitnode_out;
@@ -2681,8 +2994,8 @@ static int SplitNode(
   ** In this case avoid the all to nodeWrite().
   */
   if( SQLITE_OK!=(rc = nodeWrite(pRtree, pRight))
-   || (0==pLeft->iNode && SQLITE_OK!=(rc = nodeWrite(pRtree, pLeft)))
-  ){
+      || (0==pLeft->iNode && SQLITE_OK!=(rc = nodeWrite(pRtree, pLeft)))
+          ){
     goto splitnode_out;
   }
 
@@ -2741,7 +3054,7 @@ static int SplitNode(
     pLeft = 0;
   }
 
-splitnode_out:
+    splitnode_out:
   nodeRelease(pRtree, pRight);
   nodeRelease(pRtree, pLeft);
   sqlite3_free(aCell);
@@ -3022,7 +3335,10 @@ static int rtreeInsertCell(
     }
   }
   if( nodeInsertCell(pRtree, pNode, pCell) ){
-    rc = SplitNode(pRtree, pNode, pCell, iHeight);
+//    rc = SplitNode(pRtree, pNode, pCell, iHeight);
+    rc = SplitNodeNew(pRtree, pNode, pCell,
+                      pNode->pParent, pNode->pParent,
+                      NULL, 0, iHeight);
 //    if( iHeight<=pRtree->iReinsertHeight || pNode->iNode==1){
 //      rc = SplitNode(pRtree, pNode, pCell, iHeight);
 //    }else{
