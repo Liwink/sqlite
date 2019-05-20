@@ -228,12 +228,14 @@ struct RtreeSearchPoint {
 ** If an R*-tree "Reinsert" operation is required, the same number of
 ** cells are removed from the overfull node and reinserted into the tree.
 */
-#define RTREE_MINCELLS(p) ((((p)->iNodeSize-4)/(p)->nBytesPerCell)/3)
+// FIXME: change the RTREE_MINCELLS for testing
+//#define RTREE_MINCELLS(p) ((((p)->iNodeSize-4)/(p)->nBytesPerCell)/3)
+#define RTREE_MINCELLS(p) 1
 #define RTREE_REINSERT(p) RTREE_MINCELLS(p)
 
 // FIXME: change the RTREE_MAXCELLS for testing
 //#define RTREE_MAXCELLS 51
-#define RTREE_MAXCELLS 5
+#define RTREE_MAXCELLS 2
 
 /*
 ** The smallest possible node-size is (512-64)==448 bytes. And the largest
@@ -2194,7 +2196,9 @@ static int ChooseLeaf(
       nodeGetCell(pRtree, pNode, iCell, &cell);
       growth = cellGrowth(pRtree, &cell, pCell);
       area = cellArea(pRtree, &cell);
-      if( iCell==0||growth<fMinGrowth||(growth==fMinGrowth && area<fMinArea) ){
+      // fixme: how to calculate cost
+      if( iCell==0|| area<fMinArea ){
+//      if( iCell==0||growth<fMinGrowth||(growth==fMinGrowth && area<fMinArea) ){
         bBest = 1;
       }
       if( bBest ){
@@ -2223,12 +2227,14 @@ static int ChooseLeavesInsertCell(
         Rtree *pRtree,               /* Rtree table */
         RtreeCell *pCell,            /* Cell to insert into rtree */
         int iHeight,                 /* Height of sub-tree rooted at pCell */
-        RtreeNode *pNode             /* Node to be added */
+        RtreeNode *pNode,            /* Node to be added */
+        int *isInserted
 ){
   int rc;
 
   if (pRtree->iDepth - iHeight == 0) {
     rc = rtreeInsertCell(pRtree, pNode, pCell, 0);
+    *isInserted = 1;
   } else {
 
     int iCell;
@@ -2249,7 +2255,7 @@ static int ChooseLeavesInsertCell(
       if (overlap != RTREE_ZERO) {
         rc = nodeAcquire(pRtree, cell.iRowid, pNode, &pChild);
         if (rc == SQLITE_OK) {
-          rc = ChooseLeavesInsertCell(pRtree, pCell, iHeight + 1, pChild);
+          rc = ChooseLeavesInsertCell(pRtree, pCell, iHeight + 1, pChild, isInserted);
         }
         nodeRelease(pRtree, pChild);
         if (rc != SQLITE_OK) {
@@ -2603,6 +2609,14 @@ static int SplitNodeNew(
         int iHeight
 );
 
+void printCell(Rtree *pRtree, RtreeCell *cell) {
+  printf("(%f, %f, %f, %f)\n",
+          DCOORD(cell->aCoord[0]),
+          DCOORD(cell->aCoord[1]),
+          DCOORD(cell->aCoord[2]),
+          DCOORD(cell->aCoord[3]));
+}
+
 static int getSplitCut(
         Rtree *pRtree,
         RtreeCell *aCell,
@@ -2659,7 +2673,7 @@ static int getSplitCut(
       right.aCoordCut[ii * 2] = cut;
 
 
-      for (kk = 1; kk < (nCell - 1); kk++) {
+      for (kk = 0; kk < nCell; kk++) {
         tCell = &aCell[aaSorted[ii][kk]];
         if (DCOORD(tCell->aCoord[ii * 2 + 1]) <= DCOORD(cut)) {
           cellUnion(pRtree, &left, &aCell[aaSorted[ii][kk]]);
@@ -2680,6 +2694,9 @@ static int getSplitCut(
         fBestArea = area;
         *bestCut = cut;
         bestDim = ii;
+        printCell(pRtree, &left);
+        printCell(pRtree, &right);
+        printf("dim: %d, cut: %f, area: %f\n", ii, DCOORD(cut), area);
       }
     }
 
@@ -2705,9 +2722,23 @@ static int splitNodeByCut(
 ) {
   int ii;
   double cut = DCOORD(cutCoord);
+  printf("dim: %d, cut: %f\n", cutDim, cut);
 
-  int isLeftEmpty = 1;
-  int isRightEmpty = 1;
+//  int isLeftEmpty = 1;
+//  int isRightEmpty = 1;
+
+  int *aSorted;
+  int *aSpare;
+  sqlite_int64 nByte = 2 * nCell * sizeof(int);
+  aSorted = (int *) sqlite3_malloc64(nByte);
+  memset(aSorted, 0, nByte);
+  aSpare = &aSorted[nCell];
+  SortByDimension(pRtree, aSorted, nCell, cutDim, aCell, aSpare);
+
+  memcpy(pBboxLeft, &aCell[aSorted[0]], sizeof(RtreeCell));
+  pBboxLeft->aCoordCut[cutDim * 2 + 1] = cutCoord;
+  memcpy(pBboxRight, &aCell[aSorted[nCell - 1]], sizeof(RtreeCell));
+  pBboxRight->aCoordCut[cutDim * 2] = cutCoord;
 
   for (ii = 0; ii < nCell; ii++) {
     /*
@@ -2719,19 +2750,9 @@ static int splitNodeByCut(
     RtreeCell *pCell = &aCell[ii];
 
     if (DCOORD(pCell->aCoord[cutDim * 2 + 1]) <= cut) {
-      if (isLeftEmpty == 1) {
-        isLeftEmpty = 0;
-        memcpy(pBboxLeft, pCell, sizeof(RtreeCell));
-        pBboxLeft->aCoordCut[cutDim * 2 + 1] = cutCoord;
-      }
       nodeInsertCell(pRtree, pLeft, pCell);
       cellUnion(pRtree, pBboxLeft, pCell);
     } else if (DCOORD(pCell->aCoord[cutDim * 2]) >= cut) {
-      if (isRightEmpty == 1) {
-        isRightEmpty = 0;
-        memcpy(pBboxRight, pCell, sizeof(RtreeCell));
-        pBboxRight->aCoordCut[cutDim * 2] = cutCoord;
-      }
       nodeInsertCell(pRtree, pRight, pCell);
       cellUnion(pRtree, pBboxRight, pCell);
     } else if (iHeight == 0) {
@@ -2841,6 +2862,8 @@ static int SplitNodeNew(
   if (!cut) {
     cut = sqlite3_malloc64(sizeof(RtreeCoord));
     dim = getSplitCut(pRtree, aCell, nCell, cut);
+  } else {
+    printf("using parent's cut\n");
   }
 
   rc = splitNodeByCut(pRtree, aCell, nCell, dim, *cut,
@@ -3712,23 +3735,27 @@ static int rtreeUpdate(
     if (rc == SQLITE_OK) {
       rc = nodeAcquire(pRtree, 1, 0, &pNode);
     }
+
+    int isOverlap = 0;
     if (rc == SQLITE_OK) {
-      rc = ChooseLeavesInsertCell(pRtree, &cell, 0, pNode);
+      rc = ChooseLeavesInsertCell(pRtree, &cell, 0, pNode, &isOverlap);
       nodeRelease(pRtree, pNode);
     }
 
-//    if( rc==SQLITE_OK ){
-//      rc = ChooseLeaf(pRtree, &cell, 0, &pLeaf);
-//    }
-//    if( rc==SQLITE_OK ){
-//      int rc2;
+    // if the new cell does not overlap with any current nodes
+    // choose a leaf and insert
+    if( rc==SQLITE_OK && isOverlap == 0){
+      rc = ChooseLeaf(pRtree, &cell, 0, &pLeaf);
+    }
+    if( rc==SQLITE_OK && isOverlap == 0){
+      int rc2;
 //      pRtree->iReinsertHeight = -1;
-//      rc = rtreeInsertCell(pRtree, pLeaf, &cell, 0);
-//      rc2 = nodeRelease(pRtree, pLeaf);
-//      if( rc==SQLITE_OK ){
-//        rc = rc2;
-//      }
-//    }
+      rc = rtreeInsertCell(pRtree, pLeaf, &cell, 0);
+      rc2 = nodeRelease(pRtree, pLeaf);
+      if( rc==SQLITE_OK ){
+        rc = rc2;
+      }
+    }
     // how to deal with rollback
     if( rc==SQLITE_OK && pRtree->nAux ){
       sqlite3_stmt *pUp = pRtree->pWriteAux;
