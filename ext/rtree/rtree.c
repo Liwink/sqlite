@@ -2610,23 +2610,42 @@ static int SplitNodeNew(
 );
 
 void printCell(Rtree *pRtree, RtreeCell *cell) {
-  printf("(%f, %f, %f, %f)\n",
-          DCOORD(cell->aCoord[0]),
-          DCOORD(cell->aCoord[1]),
-          DCOORD(cell->aCoord[2]),
-          DCOORD(cell->aCoord[3]));
+  printf("(%0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f)\n",
+         DCOORD(cell->aCoord[0]),
+         DCOORD(cell->aCoord[1]),
+         DCOORD(cell->aCoord[2]),
+         DCOORD(cell->aCoord[3]),
+         DCOORD(cell->aCoordCut[0]),
+         DCOORD(cell->aCoordCut[1]),
+         DCOORD(cell->aCoordCut[2]),
+         DCOORD(cell->aCoordCut[3])
+  );
 }
 
 static int getSplitCut(
         Rtree *pRtree,
         RtreeCell *aCell,
         int nCell,
-        RtreeCoord *bestCut
+        RtreeCoord *bestCut,
+        int *bestDim
 ) {
   int **aaSorted;
   int *aSpare;
   int ii;
-  int bestDim = 0;
+  *bestDim = -1;
+
+  RtreeCoord pCoord[RTREE_MAX_DIMENSIONS * 2];
+
+  for (ii = 0; ii < nCell; ii++) {
+    for (int jj = 0; jj < RTREE_MAX_DIMENSIONS; jj++) {
+      if (ii == 0 || DCOORD(pCoord[jj * 2]) > DCOORD(aCell[ii].aCoordCut[jj * 2])) {
+        pCoord[jj * 2] = aCell[ii].aCoordCut[jj * 2];
+      }
+      if (ii == 0 || DCOORD(pCoord[jj * 2 + 1]) < DCOORD(aCell[ii].aCoordCut[jj * 2 + 1])) {
+        pCoord[jj * 2 + 1] = aCell[ii].aCoordCut[jj * 2 + 1];
+      }
+    }
+  }
 
   RtreeDValue fBestArea = RTREE_ZERO;
 
@@ -2664,9 +2683,13 @@ static int getSplitCut(
       RtreeCell right;
       int kk;
       RtreeDValue area;
+      int leftNum = 0;
+      int rightNum = 0;
 
       memcpy(&left, &aCell[aaSorted[ii][0]], sizeof(RtreeCell));
       memcpy(&right, &aCell[aaSorted[ii][nCell - 1]], sizeof(RtreeCell));
+      memcpy(left.aCoordCut, pCoord, sizeof(RtreeCoord) * 2 * RTREE_MAX_DIMENSIONS);
+      memcpy(right.aCoordCut, pCoord, sizeof(RtreeCoord) * 2 * RTREE_MAX_DIMENSIONS);
 
       cut = aCell[aaSorted[ii][nLeft]].aCoord[ii * 2];
       left.aCoordCut[ii * 2 + 1] = cut;
@@ -2677,23 +2700,27 @@ static int getSplitCut(
         tCell = &aCell[aaSorted[ii][kk]];
         if (DCOORD(tCell->aCoord[ii * 2 + 1]) <= DCOORD(cut)) {
           cellUnion(pRtree, &left, &aCell[aaSorted[ii][kk]]);
+          leftNum += 1;
         } else if (DCOORD(tCell->aCoord[ii * 2]) >= DCOORD(cut)) {
           cellUnion(pRtree, &right, &aCell[aaSorted[ii][kk]]);
+          rightNum += 1;
         } else {
           cellUnion(pRtree, &left, &aCell[aaSorted[ii][kk]]);
           cellUnion(pRtree, &right, &aCell[aaSorted[ii][kk]]);
+          leftNum += 1;
+          rightNum += 1;
         }
       }
 
       // todo: how to calculate the cost
       // here, we only choose the one with the minimal area
       area = cellArea(pRtree, &left) + cellArea(pRtree, &right);
-      if ((ii == 0 && nLeft == RTREE_MINCELLS(pRtree))
-          || (area < fBestArea)
+      if (leftNum <= RTREE_MAXCELLS && rightNum <= RTREE_MAXCELLS &&
+              (*bestDim == -1 || (area < fBestArea))
               ) {
         fBestArea = area;
         *bestCut = cut;
-        bestDim = ii;
+        *bestDim = ii;
         printCell(pRtree, &left);
         printCell(pRtree, &right);
         printf("dim: %d, cut: %f, area: %f\n", ii, DCOORD(cut), area);
@@ -2704,7 +2731,11 @@ static int getSplitCut(
 
 
   sqlite3_free(aaSorted);
-  return bestDim;
+  if (*bestDim == -1) {
+    return SQLITE_ERROR;
+  } else {
+    return SQLITE_OK;
+  }
 }
 
 static int splitNodeByCut(
@@ -2736,8 +2767,22 @@ static int splitNodeByCut(
   SortByDimension(pRtree, aSorted, nCell, cutDim, aCell, aSpare);
 
   memcpy(pBboxLeft, &aCell[aSorted[0]], sizeof(RtreeCell));
-  pBboxLeft->aCoordCut[cutDim * 2 + 1] = cutCoord;
   memcpy(pBboxRight, &aCell[aSorted[nCell - 1]], sizeof(RtreeCell));
+
+  for (ii = 0; ii < nCell; ii++) {
+    for (int jj = 0; jj < RTREE_MAX_DIMENSIONS; jj++) {
+      if (DCOORD(pBboxLeft->aCoordCut[jj * 2]) > DCOORD(aCell[ii].aCoordCut[jj * 2])) {
+        pBboxLeft->aCoordCut[jj * 2] = aCell[ii].aCoordCut[jj * 2];
+        pBboxRight->aCoordCut[jj * 2] = aCell[ii].aCoordCut[jj * 2];
+      }
+      if (DCOORD(pBboxLeft->aCoordCut[jj * 2 + 1]) < DCOORD(aCell[ii].aCoordCut[jj * 2 + 1])) {
+        pBboxLeft->aCoordCut[jj * 2 + 1] = aCell[ii].aCoordCut[jj * 2 + 1];
+        pBboxRight->aCoordCut[jj * 2 + 1] = aCell[ii].aCoordCut[jj * 2 + 1];
+      }
+    }
+  }
+
+  pBboxLeft->aCoordCut[cutDim * 2 + 1] = cutCoord;
   pBboxRight->aCoordCut[cutDim * 2] = cutCoord;
 
   for (ii = 0; ii < nCell; ii++) {
@@ -2861,7 +2906,11 @@ static int SplitNodeNew(
 
   if (!cut) {
     cut = sqlite3_malloc64(sizeof(RtreeCoord));
-    dim = getSplitCut(pRtree, aCell, nCell, cut);
+    rc = getSplitCut(pRtree, aCell, nCell, cut, &dim);
+    if (rc != SQLITE_OK) {
+      printf("No valid split!\n");
+      goto splitnode_out;
+    }
   } else {
     printf("using parent's cut\n");
   }
