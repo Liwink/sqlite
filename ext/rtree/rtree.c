@@ -453,6 +453,19 @@ struct RtreeMatchArg {
 #endif
 #endif
 
+void printCell(Rtree *pRtree, RtreeCell *cell) {
+  printf("(%0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f)\n",
+         DCOORD(cell->aCoord[0]),
+         DCOORD(cell->aCoord[1]),
+         DCOORD(cell->aCoord[2]),
+         DCOORD(cell->aCoord[3]),
+         DCOORD(cell->aCoordCut[0]),
+         DCOORD(cell->aCoordCut[1]),
+         DCOORD(cell->aCoordCut[2]),
+         DCOORD(cell->aCoordCut[3])
+  );
+}
+
 /*
 ** Functions to deserialize a 16 bit integer, 32 bit real number and
 ** 64 bit integer. The deserialized value is returned.
@@ -2246,6 +2259,7 @@ static int ChooseLeaf(
 }
 
 static int rtreeInsertCell(Rtree *pRtree, RtreeNode *pNode, RtreeCell *pCell, int iHeight);
+static int rtreeInsertCellNew(Rtree *pRtree, RtreeNode *pNode, RtreeCell *pCell, int iHeight, int *isSplit);
 
 /*
 ** Insert the cell to all overlapped leaves
@@ -2255,13 +2269,14 @@ static int ChooseLeavesInsertCell(
         RtreeCell *pCell,            /* Cell to insert into rtree */
         int iHeight,                 /* Height of sub-tree rooted at pCell */
         RtreeNode *pNode,            /* Node to be added */
-        int *isInserted
+        int *isSplit
 ){
-  int rc;
+  int rc = SQLITE_OK;
 
   if (pRtree->iDepth - iHeight == 0) {
-    rc = rtreeInsertCell(pRtree, pNode, pCell, 0);
-    *isInserted = 1;
+    printf("ChooseLeavesInsertCell insert: ");
+    printCell(pRtree, pCell);
+    rc = rtreeInsertCellNew(pRtree, pNode, pCell, 0, isSplit);
   } else {
 
     int iCell;
@@ -2283,10 +2298,10 @@ static int ChooseLeavesInsertCell(
       if (overlap != RTREE_ZERO) {
         rc = nodeAcquire(pRtree, cell.iRowid, pNode, &pChild);
         if (rc == SQLITE_OK) {
-          rc = ChooseLeavesInsertCell(pRtree, pCell, iHeight + 1, pChild, isInserted);
+          rc = ChooseLeavesInsertCell(pRtree, pCell, iHeight + 1, pChild, isSplit);
         }
         nodeRelease(pRtree, pChild);
-        if (rc != SQLITE_OK) {
+        if (rc != SQLITE_OK || *isSplit) {
           break;
         }
       }
@@ -2637,19 +2652,6 @@ static int SplitNodeNew(
         int iHeight
 );
 
-void printCell(Rtree *pRtree, RtreeCell *cell) {
-  printf("(%0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f)\n",
-         DCOORD(cell->aCoord[0]),
-         DCOORD(cell->aCoord[1]),
-         DCOORD(cell->aCoord[2]),
-         DCOORD(cell->aCoord[3]),
-         DCOORD(cell->aCoordCut[0]),
-         DCOORD(cell->aCoordCut[1]),
-         DCOORD(cell->aCoordCut[2]),
-         DCOORD(cell->aCoordCut[3])
-  );
-}
-
 static int getSplitCut(
         Rtree *pRtree,
         RtreeCell *aCell,
@@ -2799,8 +2801,6 @@ static int splitNodeByCut(
 
   memcpy(pBboxLeft, &aCell[aSorted[0]], sizeof(RtreeCell));
   memcpy(pBboxRight, &aCell[aSorted[nCell - 1]], sizeof(RtreeCell));
-  printCell(pRtree, pBboxLeft);
-  printCell(pRtree, pBboxRight);
 
   for (ii = 0; ii < nCell; ii++) {
     for (int jj = 0; jj < RTREE_MAX_DIMENSIONS; jj++) {
@@ -2847,6 +2847,10 @@ static int splitNodeByCut(
       SplitNodeNew(pRtree, cNode, NULL, pLeft, pRight,
               &cutCoord, cutDim, iHeight-1);
     }
+//    printf("%d.\n", ii);
+//    printCell(pRtree, pCell);
+//    printCell(pRtree, pBboxLeft);
+//    printCell(pRtree, pBboxRight);
 
   }
 
@@ -2951,6 +2955,8 @@ static int SplitNodeNew(
   rc = splitNodeByCut(pRtree, aCell, nCell, dim, *cut,
                       pLeft, pRight, &leftbbox, &rightbbox,
                       pNode, iHeight);
+  printCell(pRtree, &leftbbox);
+  printCell(pRtree, &rightbbox);
 
 //  rc = splitNodePlustree(pRtree, aCell, nCell, pLeft, pRight,
 //                         &leftbbox, &rightbbox);
@@ -2973,6 +2979,8 @@ static int SplitNodeNew(
   leftbbox.iRowid = pLeft->iNode;
 
   if( pNode->iNode==1 ){
+    printf("SplitNodeNew leftbbox insert: ");
+    printCell(pRtree, pCell);
     rc = rtreeInsertCell(pRtree, pLeft->pParent, &leftbbox, iHeight+1);
     if( rc!=SQLITE_OK ){
       goto splitnode_out;
@@ -2988,6 +2996,8 @@ static int SplitNodeNew(
       goto splitnode_out;
     }
   }
+  printf("SplitNodeNew rightbbox insert: ");
+  printCell(pRtree, pCell);
   if( (rc = rtreeInsertCell(pRtree, pRight->pParent, &rightbbox, iHeight+1)) ){
     goto splitnode_out;
   }
@@ -3421,6 +3431,51 @@ static int Reinsert(
 }
 
 /*
+** Insert cell pCell into node pNode. Node pNode is the head of a
+** subtree iHeight high (leaf nodes have iHeight==0).
+*/
+static int rtreeInsertCellNew(
+        Rtree *pRtree,
+        RtreeNode *pNode,
+        RtreeCell *pCell,
+        int iHeight,
+        int *isSplit
+){
+  int rc = SQLITE_OK;
+  if( iHeight>0 ){
+    RtreeNode *pChild = nodeHashLookup(pRtree, pCell->iRowid);
+    if( pChild ){
+      nodeRelease(pRtree, pChild->pParent);
+      nodeReference(pNode);
+      pChild->pParent = pNode;
+    }
+  }
+  if( nodeInsertCell(pRtree, pNode, pCell) ){
+//    rc = SplitNode(pRtree, pNode, pCell, iHeight);
+    rc = SplitNodeNew(pRtree, pNode, pCell,
+                      pNode->pParent, pNode->pParent,
+                      NULL, 0, iHeight);
+    *isSplit = 1;
+//    if( iHeight<=pRtree->iReinsertHeight || pNode->iNode==1){
+//      rc = SplitNode(pRtree, pNode, pCell, iHeight);
+//    }else{
+//      pRtree->iReinsertHeight = iHeight;
+//      rc = Reinsert(pRtree, pNode, pCell, iHeight);
+//    }
+  }else{
+    rc = AdjustTree(pRtree, pNode, pCell);
+    if( rc==SQLITE_OK ){
+      if( iHeight==0 ){
+        rc = rowidWrite(pRtree, pCell->iRowid, pNode->iNode);
+      }else{
+        rc = parentWrite(pRtree, pCell->iRowid, pNode->iNode);
+      }
+    }
+  }
+  return rc;
+}
+
+/*
 ** Insert cell pCell into node pNode. Node pNode is the head of a 
 ** subtree iHeight high (leaf nodes have iHeight==0).
 */
@@ -3818,9 +3873,9 @@ static int rtreeUpdate(
       rc = nodeAcquire(pRtree, 1, 0, &pNode);
     }
 
-    int isOverlap = 0;
     if (rc == SQLITE_OK) {
-      rc = ChooseLeavesInsertCell(pRtree, &cell, 0, pNode, &isOverlap);
+      int isSplit = 0;
+      rc = ChooseLeavesInsertCell(pRtree, &cell, 0, pNode, &isSplit);
       nodeRelease(pRtree, pNode);
     }
 
