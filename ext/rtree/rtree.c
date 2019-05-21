@@ -453,17 +453,22 @@ struct RtreeMatchArg {
 #endif
 #endif
 
-void printCell(Rtree *pRtree, RtreeCell *cell) {
-  printf("(%0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f)\n",
-         DCOORD(cell->aCoord[0]),
-         DCOORD(cell->aCoord[1]),
-         DCOORD(cell->aCoord[2]),
-         DCOORD(cell->aCoord[3]),
-         DCOORD(cell->aCoordCut[0]),
-         DCOORD(cell->aCoordCut[1]),
-         DCOORD(cell->aCoordCut[2]),
-         DCOORD(cell->aCoordCut[3])
-  );
+#define DEBUG 1
+
+void printCell(Rtree *pRtree, RtreeCell *cell, char *header) {
+  if (DEBUG == 1) {
+    printf("%s", header);
+    printf("(%0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f)\n",
+           DCOORD(cell->aCoord[0]),
+           DCOORD(cell->aCoord[1]),
+           DCOORD(cell->aCoord[2]),
+           DCOORD(cell->aCoord[3]),
+           DCOORD(cell->aCoordCut[0]),
+           DCOORD(cell->aCoordCut[1]),
+           DCOORD(cell->aCoordCut[2]),
+           DCOORD(cell->aCoordCut[3])
+    );
+  }
 }
 
 /*
@@ -483,9 +488,9 @@ static void readCoord(u8 *p, RtreeCoord *pCoord){
   pCoord->u = *(u32*)p;
 #else
   pCoord->u = (
-    (((u32)p[0]) << 24) + 
-    (((u32)p[1]) << 16) + 
-    (((u32)p[2]) <<  8) + 
+    (((u32)p[0]) << 24) +
+    (((u32)p[1]) << 16) +
+    (((u32)p[2]) <<  8) +
     (((u32)p[3]) <<  0)
   );
 #endif
@@ -505,13 +510,13 @@ static i64 readInt64(u8 *p){
   return x;
 #else
   return (i64)(
-    (((u64)p[0]) << 56) + 
-    (((u64)p[1]) << 48) + 
-    (((u64)p[2]) << 40) + 
-    (((u64)p[3]) << 32) + 
-    (((u64)p[4]) << 24) + 
-    (((u64)p[5]) << 16) + 
-    (((u64)p[6]) <<  8) + 
+    (((u64)p[0]) << 56) +
+    (((u64)p[1]) << 48) +
+    (((u64)p[2]) << 40) +
+    (((u64)p[3]) << 32) +
+    (((u64)p[4]) << 24) +
+    (((u64)p[5]) << 16) +
+    (((u64)p[6]) <<  8) +
     (((u64)p[7]) <<  0)
   );
 #endif
@@ -763,7 +768,7 @@ static int nodeAcquire(
   }
 
   /* If no error has occurred so far, check if the "number of entries"
-  ** field on the node is too large. If so, set the return code to 
+  ** field on the node is too large. If so, set the return code to
   ** SQLITE_CORRUPT_VTAB.
   */
   if( pNode && rc==SQLITE_OK ){
@@ -2274,8 +2279,7 @@ static int ChooseLeavesInsertCell(
   int rc = SQLITE_OK;
 
   if (pRtree->iDepth - iHeight == 0) {
-    printf("ChooseLeavesInsertCell insert: ");
-    printCell(pRtree, pCell);
+    printCell(pRtree, pCell, "ChooseLeavesInsertCell insert: ");
     rc = rtreeInsertCellNew(pRtree, pNode, pCell, 0, isSplit);
   } else {
 
@@ -2751,8 +2755,8 @@ static int getSplitCut(
         fBestArea = area;
         *bestCut = cut;
         *bestDim = ii;
-        printCell(pRtree, &left);
-        printCell(pRtree, &right);
+        printCell(pRtree, &left, "getSplitCut left: ");
+        printCell(pRtree, &right, "getSplitCut right: ");
         printf("dim: %d, cut: %f, area: %f\n", ii, DCOORD(cut), area);
       }
     }
@@ -2955,8 +2959,8 @@ static int SplitNodeNew(
   rc = splitNodeByCut(pRtree, aCell, nCell, dim, *cut,
                       pLeft, pRight, &leftbbox, &rightbbox,
                       pNode, iHeight);
-  printCell(pRtree, &leftbbox);
-  printCell(pRtree, &rightbbox);
+  printCell(pRtree, &leftbbox, "leftbbox: ");
+  printCell(pRtree, &rightbbox, "rightbbox: ");
 
 //  rc = splitNodePlustree(pRtree, aCell, nCell, pLeft, pRight,
 //                         &leftbbox, &rightbbox);
@@ -2979,8 +2983,7 @@ static int SplitNodeNew(
   leftbbox.iRowid = pLeft->iNode;
 
   if( pNode->iNode==1 ){
-    printf("SplitNodeNew leftbbox insert: ");
-    printCell(pRtree, pCell);
+    printCell(pRtree, pCell, "SplitNodeNew leftbbox insert: ");
     rc = rtreeInsertCell(pRtree, pLeft->pParent, &leftbbox, iHeight+1);
     if( rc!=SQLITE_OK ){
       goto splitnode_out;
@@ -2996,8 +2999,7 @@ static int SplitNodeNew(
       goto splitnode_out;
     }
   }
-  printf("SplitNodeNew rightbbox insert: ");
-  printCell(pRtree, pCell);
+  printCell(pRtree, pCell, "SplitNodeNew rightbbox insert: ");
   if( (rc = rtreeInsertCell(pRtree, pRight->pParent, &rightbbox, iHeight+1)) ){
     goto splitnode_out;
   }
