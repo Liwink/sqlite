@@ -2156,6 +2156,33 @@ static RtreeDValue cellOverlap(
   return overlap;
 }
 
+static RtreeDValue cellCutOverlap(
+        Rtree *pRtree,
+        RtreeCell *p,
+        RtreeCell *aCell,
+        int nCell
+){
+  int ii;
+  RtreeDValue overlap = RTREE_ZERO;
+  for(ii=0; ii<nCell; ii++){
+    int jj;
+    RtreeDValue o = (RtreeDValue)1;
+    for(jj=0; jj<pRtree->nDim2; jj+=2){
+      RtreeDValue x1, x2;
+      x1 = MAX(DCOORD(p->aCoord[jj]), DCOORD(aCell[ii].aCoordCut[jj]));
+      x2 = MIN(DCOORD(p->aCoord[jj+1]), DCOORD(aCell[ii].aCoordCut[jj+1]));
+      if( x2<x1 ){
+        o = (RtreeDValue)0;
+        break;
+      }else{
+        o = o * (x2-x1);
+      }
+    }
+    overlap += o;
+  }
+  return overlap;
+}
+
 
 /*
 ** This function implements the ChooseLeaf algorithm from Gutman[84].
@@ -2250,7 +2277,8 @@ static int ChooseLeavesInsertCell(
 
       nodeGetCell(pRtree, pNode, iCell, &cell);
 
-      overlap = cellOverlap(pRtree, &cell, pCell, 1);
+      // overlap with cell.aCoordCut or not
+      overlap = cellCutOverlap(pRtree, &cell, pCell, 1);
 
       if (overlap != RTREE_ZERO) {
         rc = nodeAcquire(pRtree, cell.iRowid, pNode, &pChild);
@@ -2763,11 +2791,16 @@ static int splitNodeByCut(
   sqlite_int64 nByte = 2 * nCell * sizeof(int);
   aSorted = (int *) sqlite3_malloc64(nByte);
   memset(aSorted, 0, nByte);
+  for (ii=0; ii<nCell; ii++) {
+    aSorted[ii] = ii;
+  }
   aSpare = &aSorted[nCell];
   SortByDimension(pRtree, aSorted, nCell, cutDim, aCell, aSpare);
 
   memcpy(pBboxLeft, &aCell[aSorted[0]], sizeof(RtreeCell));
   memcpy(pBboxRight, &aCell[aSorted[nCell - 1]], sizeof(RtreeCell));
+  printCell(pRtree, pBboxLeft);
+  printCell(pRtree, pBboxRight);
 
   for (ii = 0; ii < nCell; ii++) {
     for (int jj = 0; jj < RTREE_MAX_DIMENSIONS; jj++) {
@@ -3793,18 +3826,18 @@ static int rtreeUpdate(
 
     // if the new cell does not overlap with any current nodes
     // choose a leaf and insert
-    if( rc==SQLITE_OK && isOverlap == 0){
-      rc = ChooseLeaf(pRtree, &cell, 0, &pLeaf);
-    }
-    if( rc==SQLITE_OK && isOverlap == 0){
-      int rc2;
+//    if( rc==SQLITE_OK && isOverlap == 0){
+//      rc = ChooseLeaf(pRtree, &cell, 0, &pLeaf);
+//    }
+//    if( rc==SQLITE_OK && isOverlap == 0){
+//      int rc2;
 //      pRtree->iReinsertHeight = -1;
-      rc = rtreeInsertCell(pRtree, pLeaf, &cell, 0);
-      rc2 = nodeRelease(pRtree, pLeaf);
-      if( rc==SQLITE_OK ){
-        rc = rc2;
-      }
-    }
+//      rc = rtreeInsertCell(pRtree, pLeaf, &cell, 0);
+//      rc2 = nodeRelease(pRtree, pLeaf);
+//      if( rc==SQLITE_OK ){
+//        rc = rc2;
+//      }
+//    }
     // how to deal with rollback
     if( rc==SQLITE_OK && pRtree->nAux ){
       sqlite3_stmt *pUp = pRtree->pWriteAux;
