@@ -235,7 +235,7 @@ struct RtreeSearchPoint {
 
 // FIXME: change the RTREE_MAXCELLS for testing
 //#define RTREE_MAXCELLS 51
-#define RTREE_MAXCELLS 2
+#define RTREE_MAXCELLS 5
 
 /*
 ** The smallest possible node-size is (512-64)==448 bytes. And the largest
@@ -1523,7 +1523,7 @@ static RtreeSearchPoint *rtreeSearchPointNew(
  *
  * debug tree
  */
-#if 1
+#if 0
 /* Tracing routines for the RtreeSearchPoint queue */
 static void tracePoint(RtreeSearchPoint *p, int idx, RtreeCursor *pCur){
   if( idx<0 ){ printf(" s"); }else{ printf("%2d", idx); }
@@ -2306,6 +2306,7 @@ static int ChooseLeavesInsertCell(
         }
         nodeRelease(pRtree, pChild);
         if (rc != SQLITE_OK || *isSplit) {
+          printf("isSplit -> stop ChooseLeavesInsertCell\n");
           break;
         }
       }
@@ -2850,6 +2851,7 @@ static int splitNodeByCut(
       }
       SplitNodeNew(pRtree, cNode, NULL, pLeft, pRight,
               &cutCoord, cutDim, iHeight-1);
+      nodeRelease(pRtree, cNode);
     }
 //    printf("%d.\n", ii);
 //    printCell(pRtree, pCell);
@@ -3801,19 +3803,19 @@ static int rtreeUpdate(
 #ifndef SQLITE_RTREE_INT_ONLY
     if( pRtree->eCoordType==RTREE_COORD_REAL32 ) {
       for (ii = 0; ii < pRtree->nDim2; ii += 2) {
-//        cell.aCoordCut[ii].f = FLT_MIN;
-//        cell.aCoordCut[ii + 1].f = FLT_MAX;
-        cell.aCoordCut[ii].f = -99;
-        cell.aCoordCut[ii + 1].f = 99;
+        cell.aCoordCut[ii].f = FLT_MIN;
+        cell.aCoordCut[ii + 1].f = FLT_MAX;
+//        cell.aCoordCut[ii].f = -99;
+//        cell.aCoordCut[ii + 1].f = 99;
       }
     } else
 #endif
     {
       for (ii = 0; ii < pRtree->nDim2; ii += 2) {
-//        cell.aCoordCut[ii].i = INT32_MIN;
-//        cell.aCoordCut[ii + 1].i = INT32_MAX;
-        cell.aCoordCut[ii].i = -99;
-        cell.aCoordCut[ii + 1].i = 99;
+        cell.aCoordCut[ii].i = INT32_MIN;
+        cell.aCoordCut[ii + 1].i = INT32_MAX;
+//        cell.aCoordCut[ii].i = -99;
+//        cell.aCoordCut[ii + 1].i = 99;
       }
     }
 
