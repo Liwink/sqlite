@@ -2657,7 +2657,8 @@ static int SplitNodeNew(
         RtreeNode *ppRight,
         RtreeCoord *cut,
         int dim,
-        int iHeight
+        int iHeight,
+        RtreeCell *xCell
 );
 
 static int getSplitCut(
@@ -2787,6 +2788,7 @@ static int splitNodeByCut(
         RtreeCell *pBboxLeft,
         RtreeCell *pBboxRight,
         RtreeNode *pNode,
+        RtreeCell *parentCell,
         int iHeight
 ) {
   int ii;
@@ -2810,26 +2812,38 @@ static int splitNodeByCut(
   memcpy(pBboxLeft, &aCell[aSorted[0]], sizeof(RtreeCell));
   memcpy(pBboxRight, &aCell[aSorted[nCell - 1]], sizeof(RtreeCell));
 
-  for (ii = 0; ii < nCell; ii++) {
-    for (int jj = 0; jj < RTREE_MAX_DIMENSIONS; jj++) {
-      if (DCOORD(pBboxLeft->aCoordCut[jj * 2]) > DCOORD(aCell[ii].aCoordCut[jj * 2])) {
-        pBboxLeft->aCoordCut[jj * 2] = aCell[ii].aCoordCut[jj * 2];
-        pBboxRight->aCoordCut[jj * 2] = aCell[ii].aCoordCut[jj * 2];
-      }
-      if (DCOORD(pBboxLeft->aCoordCut[jj * 2 + 1]) < DCOORD(aCell[ii].aCoordCut[jj * 2 + 1])) {
-        pBboxLeft->aCoordCut[jj * 2 + 1] = aCell[ii].aCoordCut[jj * 2 + 1];
-        pBboxRight->aCoordCut[jj * 2 + 1] = aCell[ii].aCoordCut[jj * 2 + 1];
-      }
-    }
-  }
+  printCell(pRtree, parentCell, "parentCell: ");
 
-//  pBboxLeft->aCoordCut[cutDim * 2 + 1] = cutCoord;
-//  pBboxRight->aCoordCut[cutDim * 2] = cutCoord;
-  if (DCOORD(cutCoord) < DCOORD(pBboxLeft->aCoordCut[cutDim * 2 + 1])) {
-    pBboxLeft->aCoordCut[cutDim * 2 + 1] = cutCoord;
+  for (int jj = 0; jj < RTREE_MAX_DIMENSIONS; jj++) {
+    pBboxLeft->aCoordCut[jj * 2] = parentCell->aCoordCut[jj * 2];
+    pBboxLeft->aCoordCut[jj * 2 + 1] = parentCell->aCoordCut[jj * 2 + 1];
+    pBboxRight->aCoordCut[jj * 2] = parentCell->aCoordCut[jj * 2];
+    pBboxRight->aCoordCut[jj * 2 + 1] = parentCell->aCoordCut[jj * 2 + 1];
   }
-  if (DCOORD(cutCoord) > DCOORD(pBboxRight->aCoordCut[cutDim * 2])) {
-    pBboxRight->aCoordCut[cutDim * 2] = cutCoord;
+  pBboxLeft->aCoordCut[cutDim * 2 + 1] = cutCoord;
+  pBboxRight->aCoordCut[cutDim * 2] = cutCoord;
+
+//  for (ii = 0; ii < nCell; ii++) {
+//    for (int jj = 0; jj < RTREE_MAX_DIMENSIONS; jj++) {
+//      if (DCOORD(pBboxLeft->aCoordCut[jj * 2]) > DCOORD(aCell[ii].aCoordCut[jj * 2])) {
+//        pBboxLeft->aCoordCut[jj * 2] = aCell[ii].aCoordCut[jj * 2];
+//        pBboxRight->aCoordCut[jj * 2] = aCell[ii].aCoordCut[jj * 2];
+//      }
+//      if (DCOORD(pBboxLeft->aCoordCut[jj * 2 + 1]) < DCOORD(aCell[ii].aCoordCut[jj * 2 + 1])) {
+//        pBboxLeft->aCoordCut[jj * 2 + 1] = aCell[ii].aCoordCut[jj * 2 + 1];
+//        pBboxRight->aCoordCut[jj * 2 + 1] = aCell[ii].aCoordCut[jj * 2 + 1];
+//      }
+//    }
+//  }
+
+//  if (DCOORD(cutCoord) < DCOORD(pBboxLeft->aCoordCut[cutDim * 2 + 1])) {
+//    pBboxLeft->aCoordCut[cutDim * 2 + 1] = cutCoord;
+//  }
+//  if (DCOORD(cutCoord) > DCOORD(pBboxRight->aCoordCut[cutDim * 2])) {
+//    pBboxRight->aCoordCut[cutDim * 2] = cutCoord;
+//  }
+  for (ii = 0; ii < nCell; ii++) {
+
   }
 
   for (ii = 0; ii < nCell; ii++) {
@@ -2842,9 +2856,11 @@ static int splitNodeByCut(
     RtreeCell *pCell = &aCell[ii];
 
     if (DCOORD(pCell->aCoord[cutDim * 2 + 1]) <= cut) {
+      printCell(pRtree, pCell, "insert to left: ");
       nodeInsertCell(pRtree, pLeft, pCell);
       cellUnion(pRtree, pBboxLeft, pCell);
     } else if (DCOORD(pCell->aCoord[cutDim * 2]) >= cut) {
+      printCell(pRtree, pCell, "insert to right: ");
       nodeInsertCell(pRtree, pRight, pCell);
       cellUnion(pRtree, pBboxRight, pCell);
     } else if (iHeight == 0) {
@@ -2858,16 +2874,18 @@ static int splitNodeByCut(
       if (rc != SQLITE_OK) {
         return rc;
       }
+//      rc = splitNodeByCut(pRtree, aCell, nCell, dim, *cut,
+//                          pLeft, pRight, &leftbbox, &rightbbox,
+//                          pNode, &parentCell, iHeight);
       SplitNodeNew(pRtree, cNode, NULL, pLeft, pRight,
-              &cutCoord, cutDim, iHeight-1);
+              &cutCoord, cutDim, iHeight-1, pCell);
       nodeRelease(pRtree, cNode);
     }
 //    printf("%d.\n", ii);
-//    printCell(pRtree, pCell, "");
-//    printCell(pRtree, pBboxLeft, "");
-//    printCell(pRtree, pBboxRight, "");
-
   }
+//  printCell(pRtree, pCell, "");
+  printCell(pRtree, pBboxLeft, "pBboxLeft: ");
+  printCell(pRtree, pBboxRight, "pBboxRight: ");
 
   return SQLITE_OK;
 }
@@ -2899,7 +2917,8 @@ static int SplitNodeNew(
   RtreeNode *ppRight,
   RtreeCoord *cut,
   int dim,
-  int iHeight
+  int iHeight,
+  RtreeCell *xCell
 ){
   int i;
   int newCellIsRight = 0;
@@ -2967,29 +2986,67 @@ static int SplitNodeNew(
     printf("using parent's cut\n");
   }
 
-  rc = splitNodeByCut(pRtree, aCell, nCell, dim, *cut,
-                      pLeft, pRight, &leftbbox, &rightbbox,
-                      pNode, iHeight);
   RtreeCell parentCell;
   int iCell;
   nodeParentIndex(pRtree, pNode, &iCell);
-  if (iCell != -1) {
+
+  if (xCell != NULL) {
+    parentCell = *xCell;
+  }
+  else if (iCell != -1) {
     nodeGetCell(pRtree, pNode->pParent, iCell, &parentCell);
-    printCell(pRtree, &parentCell, "parentCell: ");
-    for (int jj = 0; jj < RTREE_MAX_DIMENSIONS; jj++) {
-      if( pRtree->eCoordType==RTREE_COORD_REAL32 ){
-        leftbbox.aCoordCut[jj * 2].f = MAX(leftbbox.aCoordCut[jj * 2].f, parentCell.aCoordCut[jj * 2].f);
-        rightbbox.aCoordCut[jj * 2].f = MAX(rightbbox.aCoordCut[jj * 2].f, parentCell.aCoordCut[jj * 2].f);
-        leftbbox.aCoordCut[jj * 2 + 1].f = MIN(leftbbox.aCoordCut[jj * 2 + 1].f, parentCell.aCoordCut[jj * 2 + 1].f);
-        rightbbox.aCoordCut[jj * 2 + 1].f = MIN(rightbbox.aCoordCut[jj * 2 + 1].f, parentCell.aCoordCut[jj * 2 + 1].f);
-      } else {
-        leftbbox.aCoordCut[jj * 2].i = MAX(leftbbox.aCoordCut[jj * 2].i, parentCell.aCoordCut[jj * 2].i);
-        rightbbox.aCoordCut[jj * 2].i = MAX(rightbbox.aCoordCut[jj * 2].i, parentCell.aCoordCut[jj * 2].i);
-        leftbbox.aCoordCut[jj * 2 + 1].i = MIN(leftbbox.aCoordCut[jj * 2 + 1].i, parentCell.aCoordCut[jj * 2 + 1].i);
-        rightbbox.aCoordCut[jj * 2 + 1].i = MIN(rightbbox.aCoordCut[jj * 2 + 1].i, parentCell.aCoordCut[jj * 2 + 1].i);
+    printCell(pRtree, &parentCell, "parentCell - nodeGetCell: ");
+  } else {
+
+#ifndef SQLITE_RTREE_INT_ONLY
+    if( pRtree->eCoordType==RTREE_COORD_REAL32 ) {
+      for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
+//        cell.aCoordCut[ii].f = FLT_MIN;
+//        cell.aCoordCut[ii + 1].f = FLT_MAX;
+        parentCell.aCoordCut[ii].f = -10000;
+        parentCell.aCoordCut[ii + 1].f = 10000;
+      }
+    } else
+#endif
+    {
+      for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
+//        cell.aCoordCut[ii].i = INT32_MIN;
+//        cell.aCoordCut[ii + 1].i = INT32_MAX;
+        parentCell.aCoordCut[ii].i = -10000;
+        parentCell.aCoordCut[ii + 1].i = 10000;
       }
     }
+//    for (int ii = 0; ii < RTREE_MAX_DIMENSIONS; ii += 2) {
+//        cell.aCoordCut[ii].i = INT32_MIN;
+//        cell.aCoordCut[ii + 1].i = INT32_MAX;
+//      parentCell.aCoordCut[ii * 2].i = -10000;
+//      parentCell.aCoordCut[ii * 2 + 1].i = 10000;
+//    }
+    printCell(pRtree, &parentCell, "parentCell - root: ");
   }
+
+  rc = splitNodeByCut(pRtree, aCell, nCell, dim, *cut,
+                      pLeft, pRight, &leftbbox, &rightbbox,
+                      pNode, &parentCell, iHeight);
+
+//  if (iCell != -1) {
+//    nodeGetCell(pRtree, pNode->pParent, iCell, &parentCell);
+//    printCell(pRtree, &parentCell, "parentCell: ");
+//    for (int jj = 0; jj < RTREE_MAX_DIMENSIONS; jj++) {
+//      if( pRtree->eCoordType==RTREE_COORD_REAL32 ){
+//        leftbbox.aCoordCut[jj * 2].f = MAX(leftbbox.aCoordCut[jj * 2].f, parentCell.aCoordCut[jj * 2].f);
+//        rightbbox.aCoordCut[jj * 2].f = MAX(rightbbox.aCoordCut[jj * 2].f, parentCell.aCoordCut[jj * 2].f);
+//        leftbbox.aCoordCut[jj * 2 + 1].f = MIN(leftbbox.aCoordCut[jj * 2 + 1].f, parentCell.aCoordCut[jj * 2 + 1].f);
+//        rightbbox.aCoordCut[jj * 2 + 1].f = MIN(rightbbox.aCoordCut[jj * 2 + 1].f, parentCell.aCoordCut[jj * 2 + 1].f);
+//      } else {
+//        leftbbox.aCoordCut[jj * 2].i = MAX(leftbbox.aCoordCut[jj * 2].i, parentCell.aCoordCut[jj * 2].i);
+//        rightbbox.aCoordCut[jj * 2].i = MAX(rightbbox.aCoordCut[jj * 2].i, parentCell.aCoordCut[jj * 2].i);
+//        leftbbox.aCoordCut[jj * 2 + 1].i = MIN(leftbbox.aCoordCut[jj * 2 + 1].i, parentCell.aCoordCut[jj * 2 + 1].i);
+//        rightbbox.aCoordCut[jj * 2 + 1].i = MIN(rightbbox.aCoordCut[jj * 2 + 1].i, parentCell.aCoordCut[jj * 2 + 1].i);
+//      }
+//    }
+//  }
+
   printCell(pRtree, &leftbbox, "leftbbox: ");
   printCell(pRtree, &rightbbox, "rightbbox: ");
 
@@ -3487,7 +3544,7 @@ static int rtreeInsertCellNew(
 //    rc = SplitNode(pRtree, pNode, pCell, iHeight);
     rc = SplitNodeNew(pRtree, pNode, pCell,
                       pNode->pParent, pNode->pParent,
-                      NULL, 0, iHeight);
+                      NULL, 0, iHeight, NULL);
     *isSplit = 1;
 //    if( iHeight<=pRtree->iReinsertHeight || pNode->iNode==1){
 //      rc = SplitNode(pRtree, pNode, pCell, iHeight);
@@ -3531,7 +3588,7 @@ static int rtreeInsertCell(
 //    rc = SplitNode(pRtree, pNode, pCell, iHeight);
     rc = SplitNodeNew(pRtree, pNode, pCell,
                       pNode->pParent, pNode->pParent,
-                      NULL, 0, iHeight);
+                      NULL, 0, iHeight, NULL);
 //    if( iHeight<=pRtree->iReinsertHeight || pNode->iNode==1){
 //      rc = SplitNode(pRtree, pNode, pCell, iHeight);
 //    }else{
