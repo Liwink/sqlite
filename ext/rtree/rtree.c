@@ -845,6 +845,8 @@ static int nodeInsertCell(
   int nCell;                    /* Current number of cells in pNode */
   int nMaxCell;                 /* Maximum number of cells for pNode */
 
+  printf("nodeInsertCell: cell(%lld) -> Node(%lld)\n", pCell->iRowid, pNode->iNode);
+
   nMaxCell = (pRtree->iNodeSize-4)/pRtree->nBytesPerCell;
   nCell = NCELL(pNode);
 
@@ -2811,6 +2813,7 @@ static int splitNodeByCut(
   aSpare = &aSorted[nCell];
   SortByDimension(pRtree, aSorted, nCell, cutDim, aCell, aSpare);
 
+  // todo: double check
   memcpy(pBboxLeft, &aCell[aSorted[0]], sizeof(RtreeCell));
   memcpy(pBboxRight, &aCell[aSorted[nCell - 1]], sizeof(RtreeCell));
 
@@ -2825,8 +2828,8 @@ static int splitNodeByCut(
   pBboxLeft->aCoordCut[cutDim * 2 + 1] = cutCoord;
   pBboxRight->aCoordCut[cutDim * 2] = cutCoord;
 
-  printf("pLeft->iNode: %d\n", pLeft->iNode);
-  printf("pRight->iNode: %d\n", pRight->iNode);
+  printf("pLeft->iNode: %lld\n", pLeft->iNode);
+  printf("pRight->iNode: %lld\n", pRight->iNode);
 
   for (ii = 0; ii < nCell; ii++) {
     /*
@@ -2838,11 +2841,13 @@ static int splitNodeByCut(
     RtreeCell *pCell = &aCell[ii];
 
     if (DCOORD(pCell->aCoord[cutDim * 2 + 1]) <= cut) {
+      printCell(pRtree, pBboxLeft, "      left: ");
       printCell(pRtree, pCell, "insert to left: ");
       nodeInsertCell(pRtree, pLeft, pCell);
       cellUnion(pRtree, pBboxLeft, pCell);
       printCell(pRtree, pBboxLeft, "      left: ");
     } else if (DCOORD(pCell->aCoord[cutDim * 2]) >= cut) {
+      printCell(pRtree, pBboxRight, "      right: ");
       printCell(pRtree, pCell, "insert to right: ");
       nodeInsertCell(pRtree, pRight, pCell);
       cellUnion(pRtree, pBboxRight, pCell);
@@ -2861,11 +2866,17 @@ static int splitNodeByCut(
 //      rc = splitNodeByCut(pRtree, aCell, nCell, dim, *cut,
 //                          pLeft, pRight, &leftbbox, &rightbbox,
 //                          pNode, &parentCell, iHeight);
-      cNode->pParent = pLeft;
+//      cNode->pParent = pLeft;
       RtreeCell cLeftCell;
       RtreeCell cRightCell;
+      printf("Before UTurn splitting: pLeft->pParent: %lld\n", pLeft->pParent->iNode);
+      printCell(pRtree, pBboxLeft, "      left: ");
+      printCell(pRtree, pBboxRight, "      right: ");
       SplitNodeNew(pRtree, cNode, NULL, pLeft, pRight,
               &cutCoord, cutDim, iHeight-1, pCell, &cLeftCell, &cRightCell);
+      printCell(pRtree, pBboxLeft, "      left: ");
+      printCell(pRtree, pBboxRight, "      right: ");
+      printf("After UTurn splitting: pLeft->pParent: %lld\n", pLeft->pParent->iNode);
 
       cellUnion(pRtree, pBboxLeft, &cLeftCell);
       cellUnion(pRtree, pBboxRight, &cRightCell);
@@ -2947,8 +2958,13 @@ static int SplitNodeNew(
     nCell++;
   }
 
+  if(xCell != NULL) {
+//    pLeft = pNode;
+//    pNode->pParent = ppLeft;
+    pLeft = nodeNew(pRtree, ppLeft);
+    pRight = nodeNew(pRtree, ppRight);
+  } else
   if( pNode->iNode==1 ){
-    printf("root\n");
     pRight = nodeNew(pRtree, pNode);
     pLeft = nodeNew(pRtree, pNode);
     pRtree->iDepth++;
@@ -3049,17 +3065,16 @@ static int SplitNodeNew(
   leftbbox.iRowid = pLeft->iNode;
 
 //  if (xRight == NULL) {
+  if (xCell != NULL) {
+    rc = nodeInsertCell(pRtree, pLeft->pParent, &leftbbox);
+  } else
   if( pNode->iNode==1 || xCell != NULL){
-    printf("4\n");
-//    printf("ppRight->iNode: %d\n", pLeft->pParent->iNode);
     printCell(pRtree, &leftbbox, "SplitNodeNew leftbbox insert: ");
     rc = rtreeInsertCell(pRtree, pLeft->pParent, &leftbbox, iHeight+1);
-    printf("5\n");
     if( rc!=SQLITE_OK ){
       goto splitnode_out;
     }
   }else{
-    printf("6\n");
     int iCell;
     rc = nodeParentIndex(pRtree, pLeft, &iCell);
     if( rc==SQLITE_OK ){
@@ -3070,12 +3085,15 @@ static int SplitNodeNew(
       goto splitnode_out;
     }
   }
-//  printf("ppLeft->iNode: %d\n", pRight->pParent->iNode);
   printCell(pRtree, &rightbbox, "SplitNodeNew rightbbox insert: ");
-  if( (rc = rtreeInsertCell(pRtree, pRight->pParent, &rightbbox, iHeight+1)) ){
+  if (xCell != NULL) {
+    rc = nodeInsertCell(pRtree, pRight->pParent, &rightbbox);
+  } else {
+    rc = rtreeInsertCell(pRtree, pRight->pParent, &rightbbox, iHeight + 1);
+  }
+  if( rc ){
     goto splitnode_out;
   }
-//  }
 
   for(i=0; i<NCELL(pRight); i++){
     i64 iRowid = nodeGetRowid(pRtree, pRight, i);
@@ -3560,6 +3578,7 @@ static int rtreeInsertCell(
   int iHeight
 ){
   int rc = SQLITE_OK;
+  printf("rtreeInsertCell: cell(%lld) -> Node(%lld)\n", pCell->iRowid, pNode->iNode);
   if( iHeight>0 ){
     RtreeNode *pChild = nodeHashLookup(pRtree, pCell->iRowid);
     if( pChild ){
@@ -4531,7 +4550,7 @@ static void rtreenode(sqlite3_context *ctx, int nArg, sqlite3_value **apArg){
 #ifndef SQLITE_RTREE_INT_ONLY
       sqlite3_str_appendf(pOut, " %g", (double)cell.aCoord[jj].f);
 #else
-      sqlite3_str_appendf(pOut, " %d", cell.aCoord[jj].i);
+      sqlite3_str_appendf(pOut, " %d", cell.aCoord[jj].i);Before UTurn splitting:
 #endif
     }
     for(jj=0; jj<tree.nDim2; jj++){
