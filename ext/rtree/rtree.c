@@ -2119,6 +2119,26 @@ static void cellUnion(Rtree *pRtree, RtreeCell *p1, RtreeCell *p2){
 }
 
 /*
+** Store the union of cells region p1 and p2 in p1.
+*/
+static void cellUnionRegion(Rtree *pRtree, RtreeCell *p1, RtreeCell *p2){
+  int ii = 0;
+  if( pRtree->eCoordType==RTREE_COORD_REAL32 ){
+    do{
+      p1->aCoordCut[ii].f = MIN(p1->aCoordCut[ii].f, p2->aCoordCut[ii].f);
+      p1->aCoordCut[ii+1].f = MAX(p1->aCoordCut[ii+1].f, p2->aCoordCut[ii+1].f);
+      ii += 2;
+    }while( ii<pRtree->nDim2 );
+  }else{
+    do{
+      p1->aCoordCut[ii].i = MIN(p1->aCoordCut[ii].i, p2->aCoordCut[ii].i);
+      p1->aCoordCut[ii+1].i = MAX(p1->aCoordCut[ii+1].i, p2->aCoordCut[ii+1].i);
+      ii += 2;
+    }while( ii<pRtree->nDim2 );
+  }
+}
+
+/*
 ** Return true if the area covered by p2 is a subset of the area covered
 ** by p1. False otherwise.
 */
@@ -2319,6 +2339,118 @@ static int ChooseLeavesInsertCell(
 
     sqlite3_free(aCell);
   }
+
+  return rc;
+}
+
+/*
+** Update the region
+*/
+static int UpdateRegion(
+        Rtree *pRtree,               /* Rtree table */
+        RtreeCell *pCell,            /* Parent cell */
+        int iHeight,                 /* Height of sub-tree rooted at pCell */
+        RtreeNode *pNode             /* Node to be added */
+){
+  int rc = SQLITE_OK;
+
+  if (pRtree->iDepth - iHeight == 0) {
+    return rc;
+  }
+
+  int iCell;
+
+  int nCell = NCELL(pNode);
+  RtreeCell cell;
+  RtreeNode *pChild;
+
+  RtreeCell *aCell = 0;
+
+  RtreeCell parentCell;
+#ifndef SQLITE_RTREE_INT_ONLY
+  if( pRtree->eCoordType==RTREE_COORD_REAL32 ) {
+    for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
+//        cell.aCoordCut[ii].f = FLT_MIN;
+//        cell.aCoordCut[ii + 1].f = FLT_MAX;
+      parentCell.aCoordCut[ii].f = 10000;
+      parentCell.aCoordCut[ii + 1].f = -10000;
+    }
+  } else
+#endif
+  {
+    for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
+//        cell.aCoordCut[ii].i = INT32_MIN;
+//        cell.aCoordCut[ii + 1].i = INT32_MAX;
+      parentCell.aCoordCut[ii].i = 10000;
+      parentCell.aCoordCut[ii + 1].i = -10000;
+    }
+  }
+
+  for (iCell = 0; iCell < nCell; iCell++) {
+    nodeGetCell(pRtree, pNode, iCell, &cell);
+    cellUnionRegion(pRtree, &parentCell, &cell);
+  }
+
+
+  if (pCell != NULL) {
+    printCell(pRtree, pCell, "UpdateRegion new parent: ");
+  }
+  printCell(pRtree, &parentCell, "UpdateRegion ori parent: ");
+
+  for (iCell = 0; iCell < nCell; iCell++) {
+    nodeGetCell(pRtree, pNode, iCell, &cell);
+
+    printCell(pRtree, &cell, "UpdateRegion child before update: ");
+
+    if (pCell != NULL) {
+      int ii = 0;
+      if (pRtree->eCoordType == RTREE_COORD_REAL32) {
+        do {
+          if (cell.aCoordCut[ii].f < pCell->aCoordCut[ii].f ||
+              cell.aCoordCut[ii].f == parentCell.aCoordCut[ii].f) {
+            cell.aCoordCut[ii].f = pCell->aCoordCut[ii].f;
+          }
+          if (cell.aCoordCut[ii + 1].f > pCell->aCoordCut[ii + 1].f ||
+              cell.aCoordCut[ii + 1].f == parentCell.aCoordCut[ii + 1].f) {
+            cell.aCoordCut[ii + 1].f = pCell->aCoordCut[ii + 1].f;
+          }
+          ii += 2;
+        } while (ii < pRtree->nDim2);
+      } else {
+        do {
+          if (cell.aCoordCut[ii].i < pCell->aCoordCut[ii].i ||
+              cell.aCoordCut[ii].i == parentCell.aCoordCut[ii].i) {
+            cell.aCoordCut[ii].i = pCell->aCoordCut[ii].i;
+          }
+          if (cell.aCoordCut[ii + 1].i > pCell->aCoordCut[ii + 1].i ||
+              cell.aCoordCut[ii + 1].i == parentCell.aCoordCut[ii + 1].i) {
+            cell.aCoordCut[ii + 1].i = pCell->aCoordCut[ii + 1].i;
+          }
+          ii += 2;
+        } while (ii < pRtree->nDim2);
+      }
+    }
+
+    // todo: write cell on disk
+    printCell(pRtree, &cell, "UpdateRegion child after update: ");
+    if( rc==SQLITE_OK ){
+      nodeOverwriteCell(pRtree, pNode, &cell, iCell);
+    }
+
+    rc = nodeAcquire(pRtree, cell.iRowid, pNode, &pChild);
+    if (rc == SQLITE_OK) {
+      rc = UpdateRegion(pRtree, &cell, iHeight + 1, pChild);
+    }
+    nodeRelease(pRtree, pChild);
+//        if (rc != SQLITE_OK || *isSplit) {
+    if (rc != SQLITE_OK) {
+      printf("isSplit -> stop ChooseLeavesInsertCell\n");
+      break;
+    }
+//    }
+  }
+
+  sqlite3_free(aCell);
 
   return rc;
 }
@@ -3969,6 +4101,7 @@ static int rtreeUpdate(
     if (rc == SQLITE_OK) {
       int isSplit = 0;
       rc = ChooseLeavesInsertCell(pRtree, &cell, 0, pNode, &isSplit);
+      UpdateRegion(pRtree, NULL, 0, pNode);
       nodeRelease(pRtree, pNode);
     }
 
