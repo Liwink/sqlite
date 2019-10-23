@@ -69,6 +69,7 @@
 #include <sqliteInt.h>
 
 #include <float.h>
+#include <stdbool.h>
 
 #ifndef SQLITE_AMALGAMATION
 #include "sqlite3rtree.h"
@@ -2322,13 +2323,17 @@ static int ChooseLeavesInsertCell(
       overlap = cellCutOverlap(pRtree, &cell, pCell, 1);
 
       if (overlap != RTREE_ZERO) {
-        printCell(pRtree, pCell, "ChooseLeavesInsertCell overlap: ");
-        printCell(pRtree, &cell, "ChooseLeavesInsertCell overlap: ");
+        printCell(pRtree, pCell, "ChooseLeavesInsertCellp overlap: ");
+        printCell(pRtree, &cell, "ChooseLeavesInsertCelli overlap: ");
         rc = nodeAcquire(pRtree, cell.iRowid, pNode, &pChild);
         if (rc == SQLITE_OK) {
           rc = ChooseLeavesInsertCell(pRtree, pCell, iHeight + 1, pChild, isSplit);
         }
         nodeRelease(pRtree, pChild);
+
+        if(*isSplit) {
+            return rc;
+        }
 //        if (rc != SQLITE_OK || *isSplit) {
         if (rc != SQLITE_OK) {
           printf("isSplit -> stop ChooseLeavesInsertCell\n");
@@ -3655,6 +3660,20 @@ static int Reinsert(
 }
 
 /*
+** Check whether we inserted this cell before
+*/
+static bool nodeContainsCell(Rtree *pRtree, RtreeNode *pNode, RtreeCell *targetCell) {
+    int nCell = NCELL(pNode);
+    for (int iCell = 0; iCell < nCell; iCell++) {
+        RtreeCell cell;
+        nodeGetCell(pRtree, pNode, iCell, &cell);
+        if (cell.iRowid == targetCell->iRowid) {
+            return true;
+        }
+    }
+    return false;
+}
+/*
 ** Insert cell pCell into node pNode. Node pNode is the head of a
 ** subtree iHeight high (leaf nodes have iHeight==0).
 */
@@ -3674,6 +3693,12 @@ static int rtreeInsertCellNew(
       pChild->pParent = pNode;
     }
   }
+
+  if( nodeContainsCell(pRtree, pNode, pCell) ) {
+      printf("contains Cell");
+      return rc;
+  }
+
   if( nodeInsertCell(pRtree, pNode, pCell) ){
 //    rc = SplitNode(pRtree, pNode, pCell, iHeight);
     rc = SplitNodeNew(pRtree, pNode, pCell,
@@ -4093,16 +4118,22 @@ static int rtreeUpdate(
     }
     *pRowid = cell.iRowid;
 
-    RtreeNode *pNode = 0;
-    if (rc == SQLITE_OK) {
-      rc = nodeAcquire(pRtree, 1, 0, &pNode);
-    }
+
 
     if (rc == SQLITE_OK) {
-      int isSplit = 0;
-      rc = ChooseLeavesInsertCell(pRtree, &cell, 0, pNode, &isSplit);
-      UpdateRegion(pRtree, NULL, 0, pNode);
-      nodeRelease(pRtree, pNode);
+      while (true) {
+        RtreeNode *pNode = 0;
+        if (rc == SQLITE_OK) {
+          rc = nodeAcquire(pRtree, 1, 0, &pNode);
+        }
+        int isSplit = 0;
+        rc = ChooseLeavesInsertCell(pRtree, &cell, 0, pNode, &isSplit);
+        UpdateRegion(pRtree, NULL, 0, pNode);
+        nodeRelease(pRtree, pNode);
+        if (isSplit == 0) {
+          break;
+        }
+      }
     }
 
     // if the new cell does not overlap with any current nodes
