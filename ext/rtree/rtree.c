@@ -857,6 +857,7 @@ static int nodeInsertCell(
     writeInt16(&pNode->zData[2], nCell+1);
     pNode->isDirty = 1;
   }
+  printf("done\n");
 
   return (nCell==nMaxCell);
 }
@@ -2348,6 +2349,146 @@ static int ChooseLeavesInsertCell(
   return rc;
 }
 
+typedef struct LinkedCell LinkedCell;
+
+struct LinkedCell {
+    RtreeCell *cell;
+    struct LinkedCell* next;
+};
+
+static LinkedCell* appendLinkedCell(LinkedCell *toAppend, RtreeCell *pCell) {
+  printf("appendLinkedCell\n");
+  LinkedCell *nextCell = (LinkedCell*)sqlite3_malloc(sizeof(LinkedCell));
+  RtreeCell *cell = sqlite3_malloc(sizeof(RtreeCell));
+  memcpy(cell, pCell, sizeof(RtreeCell));
+  nextCell->cell = cell;
+  nextCell->next = NULL;
+  toAppend->next = nextCell;
+  return nextCell;
+}
+
+static void freeLinkedCell(LinkedCell *head) {
+  if (head == NULL) {
+    return;
+  }
+  freeLinkedCell(head->next);
+  printf("freeLinkedCell\n");
+  sqlite3_free(head->cell);
+  sqlite3_free(head);
+}
+
+static bool isValid(
+        float cut,
+        int dim,
+        RtreeCell **aaCell,
+        int nCell,
+        int *nLeft,
+        int *nRight
+) {
+  *nLeft = 0;
+  *nRight = 0;
+  for (int i = 0; i < nCell; i++) {
+    if (aaCell[i]->aCoord[dim].f >= cut) {
+      *nRight += 1;
+    } else if (aaCell[i]->aCoord[dim].f <= cut) {
+      *nLeft += 1;
+    } else {
+      return false;
+    }
+  }
+  if (*nRight == 0 || *nLeft == 0) {
+    return false;
+  }
+  return true;
+}
+
+static void SplitRegion(
+        Rtree *pRtree,               /* Rtree table */
+        RtreeCell *pCell,            /* Parent cell */
+        RtreeCell **aaCell,
+        int nCell
+){
+
+  // init
+
+  printCell(pRtree, pCell, "pCell: ");
+  printf("count: %d\n", nCell);
+
+
+  if (nCell == 1) {
+    // todo:
+    printCell(pRtree, aaCell[0], "cur->cell: ");
+    printCell(pRtree, pCell, "pCell: ");
+    memcpy(aaCell[0]->aCoordCut, pCell->aCoordCut, pRtree->nDim2 * sizeof(RtreeCoord) );
+//    for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
+//      aCell[0].aCoordCut[ii].f = pCell->aCoordCut[ii].f;
+//      aCell[0].aCoordCut[ii+1].f = pCell->aCoordCut[ii+1].f;
+//    }
+    printCell(pRtree, aaCell[0], "cur->cell: ");
+    return;
+  }
+
+  int nLeft;
+  int nRight;
+  int iLeft = 0;
+  int iRight = 0;
+  RtreeCell **left;
+  RtreeCell **right;
+  RtreeCell leftCell;
+  RtreeCell rightCell;
+
+  for (int i = 0; i < nCell; i++) {
+    for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
+      float cut = aaCell[i]->aCoord[ii].f;
+      // todo: to two parts
+      if (isValid(cut, ii, aaCell, nCell, &nLeft, &nRight)) {
+        left = sqlite3_malloc(sizeof(RtreeCell *) * nLeft);
+        right = sqlite3_malloc(sizeof(RtreeCell *) * nRight);
+        for (int j = 0; j < nCell; j++) {
+          if (aaCell[j]->aCoord[ii].f < cut) {
+            printCell(pRtree, aaCell[j], "add to left");
+            left[iLeft++] = aaCell[j];
+          } else {
+            printCell(pRtree, aaCell[j], "add to right");
+            right[iRight++] = aaCell[j];
+          }
+        }
+
+        // split pCell
+        // fixme: i
+        for (int jj = 0; jj < pRtree->nDim2; jj += 2) {
+          if (jj != ii) {
+            leftCell.aCoordCut[jj].f = pCell->aCoordCut[jj].f;
+            leftCell.aCoordCut[jj + 1].f = pCell->aCoordCut[jj + 1].f;
+            rightCell.aCoordCut[jj].f = pCell->aCoordCut[jj].f;
+            rightCell.aCoordCut[jj + 1].f = pCell->aCoordCut[jj + 1].f;
+          } else {
+            leftCell.aCoordCut[jj].f = pCell->aCoordCut[jj].f;
+            leftCell.aCoordCut[jj + 1].f = cut;
+            rightCell.aCoordCut[jj].f = cut;
+            rightCell.aCoordCut[jj + 1].f = pCell->aCoordCut[jj + 1].f;
+          }
+        }
+
+        SplitRegion(pRtree, &leftCell, left, nLeft);
+        SplitRegion(pRtree, &rightCell, right, nRight);
+
+        printf("begin free leftHead\n");
+        sqlite3_free(left);
+        printf("done free leftHead\n");
+        printf("begin free rightHead\n");
+        sqlite3_free(right);
+        printf("done free rightHead\n");
+
+        return;
+
+      }
+    }
+  }
+  printf("ERROR: no valid split!!!!\n");
+
+}
+
 /*
 ** Update the region
 */
@@ -2366,10 +2507,18 @@ static int UpdateRegion(
   int iCell;
 
   int nCell = NCELL(pNode);
-  RtreeCell cell;
+//  RtreeCell cell;
   RtreeNode *pChild;
 
-  RtreeCell *aCell = 0;
+  RtreeCell *aCell;
+  RtreeCell **aaCell;
+  aCell = sqlite3_malloc64(sizeof(RtreeCell) * nCell);
+  aaCell = sqlite3_malloc64(sizeof(RtreeCell *) * nCell);
+  for(int i=0; i<nCell; i++){
+    nodeGetCell(pRtree, pNode, i, &aCell[i]);
+    aaCell[i] = &aCell[i];
+    printCell(pRtree, &aCell[i], "UpdateRegion child before update: ");
+  }
 
   RtreeCell parentCell;
 #ifndef SQLITE_RTREE_INT_ONLY
@@ -2377,8 +2526,8 @@ static int UpdateRegion(
     for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
 //        cell.aCoordCut[ii].f = FLT_MIN;
 //        cell.aCoordCut[ii + 1].f = FLT_MAX;
-      parentCell.aCoordCut[ii].f = 10000;
-      parentCell.aCoordCut[ii + 1].f = -10000;
+      parentCell.aCoordCut[ii].f = -10000;
+      parentCell.aCoordCut[ii + 1].f = 10000;
     }
   } else
 #endif
@@ -2386,76 +2535,47 @@ static int UpdateRegion(
     for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
 //        cell.aCoordCut[ii].i = INT32_MIN;
 //        cell.aCoordCut[ii + 1].i = INT32_MAX;
-      parentCell.aCoordCut[ii].i = 10000;
-      parentCell.aCoordCut[ii + 1].i = -10000;
+      parentCell.aCoordCut[ii].i = -10000;
+      parentCell.aCoordCut[ii + 1].i = 10000;
     }
   }
 
-  for (iCell = 0; iCell < nCell; iCell++) {
-    nodeGetCell(pRtree, pNode, iCell, &cell);
-    cellUnionRegion(pRtree, &parentCell, &cell);
-  }
+//  for (iCell = 0; iCell < nCell; iCell++) {
+//    nodeGetCell(pRtree, pNode, iCell, &cell);
+//    cellUnionRegion(pRtree, &parentCell, &cell);
+//  }
 
 
   if (pCell != NULL) {
     printCell(pRtree, pCell, "UpdateRegion new parent: ");
   }
-  printCell(pRtree, &parentCell, "UpdateRegion ori parent: ");
+//  printCell(pRtree, &parentCell, "UpdateRegion ori parent: ");
 
-  for (iCell = 0; iCell < nCell; iCell++) {
-    nodeGetCell(pRtree, pNode, iCell, &cell);
 
-    printCell(pRtree, &cell, "UpdateRegion child before update: ");
+  printf("3 \n");
+  SplitRegion(pRtree, pCell != NULL ? pCell : &parentCell, aaCell, nCell);
 
-    if (pCell != NULL) {
-      int ii = 0;
-      if (pRtree->eCoordType == RTREE_COORD_REAL32) {
-        do {
-          if (cell.aCoordCut[ii].f < pCell->aCoordCut[ii].f ||
-              cell.aCoordCut[ii].f == parentCell.aCoordCut[ii].f) {
-            cell.aCoordCut[ii].f = pCell->aCoordCut[ii].f;
-          }
-          if (cell.aCoordCut[ii + 1].f > pCell->aCoordCut[ii + 1].f ||
-              cell.aCoordCut[ii + 1].f == parentCell.aCoordCut[ii + 1].f) {
-            cell.aCoordCut[ii + 1].f = pCell->aCoordCut[ii + 1].f;
-          }
-          ii += 2;
-        } while (ii < pRtree->nDim2);
-      } else {
-        do {
-          if (cell.aCoordCut[ii].i < pCell->aCoordCut[ii].i ||
-              cell.aCoordCut[ii].i == parentCell.aCoordCut[ii].i) {
-            cell.aCoordCut[ii].i = pCell->aCoordCut[ii].i;
-          }
-          if (cell.aCoordCut[ii + 1].i > pCell->aCoordCut[ii + 1].i ||
-              cell.aCoordCut[ii + 1].i == parentCell.aCoordCut[ii + 1].i) {
-            cell.aCoordCut[ii + 1].i = pCell->aCoordCut[ii + 1].i;
-          }
-          ii += 2;
-        } while (ii < pRtree->nDim2);
-      }
-    }
+  printf("4 \n");
 
-    // todo: write cell on disk
-    printCell(pRtree, &cell, "UpdateRegion child after update: ");
-    if( rc==SQLITE_OK ){
-      nodeOverwriteCell(pRtree, pNode, &cell, iCell);
-    }
+  for(int i=0; i<nCell; i++){
+    printCell(pRtree, &aCell[i], "UpdateRegion child after update: ");
+    // iCell?
+    nodeOverwriteCell(pRtree, pNode, &aCell[i], i);
+    printf("4.1\n");
 
-    rc = nodeAcquire(pRtree, cell.iRowid, pNode, &pChild);
+    rc = nodeAcquire(pRtree, aCell[i].iRowid, pNode, &pChild);
+    printf("4.2\n");
     if (rc == SQLITE_OK) {
-      rc = UpdateRegion(pRtree, &cell, iHeight + 1, pChild);
+      rc = UpdateRegion(pRtree, &aCell[i], iHeight + 1, pChild);
     }
+    printf("4.3\n");
     nodeRelease(pRtree, pChild);
-//        if (rc != SQLITE_OK || *isSplit) {
-    if (rc != SQLITE_OK) {
-      printf("isSplit -> stop ChooseLeavesInsertCell\n");
-      break;
-    }
-//    }
+    printf("4.4\n");
   }
 
+  printf("begin free\n");
   sqlite3_free(aCell);
+  printf("done free\n");
 
   return rc;
 }
@@ -4128,7 +4248,9 @@ static int rtreeUpdate(
         }
         int isSplit = 0;
         rc = ChooseLeavesInsertCell(pRtree, &cell, 0, pNode, &isSplit);
-        UpdateRegion(pRtree, NULL, 0, pNode);
+        if (isSplit != 0) {
+          UpdateRegion(pRtree, NULL, 0, pNode);
+        }
         nodeRelease(pRtree, pNode);
         if (isSplit == 0) {
           break;
