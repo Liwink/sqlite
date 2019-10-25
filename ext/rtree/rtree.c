@@ -2416,15 +2416,7 @@ static void SplitRegion(
 
 
   if (nCell == 1) {
-    // todo:
-    printCell(pRtree, aaCell[0], "cur->cell: ");
-    printCell(pRtree, pCell, "pCell: ");
     memcpy(aaCell[0]->aCoordCut, pCell->aCoordCut, pRtree->nDim2 * sizeof(RtreeCoord) );
-//    for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
-//      aCell[0].aCoordCut[ii].f = pCell->aCoordCut[ii].f;
-//      aCell[0].aCoordCut[ii+1].f = pCell->aCoordCut[ii+1].f;
-//    }
-    printCell(pRtree, aaCell[0], "cur->cell: ");
     return;
   }
 
@@ -2473,12 +2465,8 @@ static void SplitRegion(
         SplitRegion(pRtree, &leftCell, left, nLeft);
         SplitRegion(pRtree, &rightCell, right, nRight);
 
-        printf("begin free leftHead\n");
         sqlite3_free(left);
-        printf("done free leftHead\n");
-        printf("begin free rightHead\n");
         sqlite3_free(right);
-        printf("done free rightHead\n");
 
         return;
 
@@ -2552,30 +2540,20 @@ static int UpdateRegion(
 //  printCell(pRtree, &parentCell, "UpdateRegion ori parent: ");
 
 
-  printf("3 \n");
   SplitRegion(pRtree, pCell != NULL ? pCell : &parentCell, aaCell, nCell);
-
-  printf("4 \n");
 
   for(int i=0; i<nCell; i++){
     printCell(pRtree, &aCell[i], "UpdateRegion child after update: ");
-    // iCell?
     nodeOverwriteCell(pRtree, pNode, &aCell[i], i);
-    printf("4.1\n");
 
     rc = nodeAcquire(pRtree, aCell[i].iRowid, pNode, &pChild);
-    printf("4.2\n");
     if (rc == SQLITE_OK) {
       rc = UpdateRegion(pRtree, &aCell[i], iHeight + 1, pChild);
     }
-    printf("4.3\n");
     nodeRelease(pRtree, pChild);
-    printf("4.4\n");
   }
 
-  printf("begin free\n");
   sqlite3_free(aCell);
-  printf("done free\n");
 
   return rc;
 }
