@@ -2390,7 +2390,7 @@ static bool isValid(
   for (int i = 0; i < nCell; i++) {
     if (aaCell[i]->aCoord[dim].f >= cut) {
       *nRight += 1;
-    } else if (aaCell[i]->aCoord[dim].f <= cut) {
+    } else if (aaCell[i]->aCoord[dim+1].f <= cut) {
       *nLeft += 1;
     } else {
       return false;
@@ -2461,6 +2461,8 @@ static void SplitRegion(
             rightCell.aCoordCut[jj + 1].f = pCell->aCoordCut[jj + 1].f;
           }
         }
+        printCell(pRtree, &leftCell, "leftCell: ");
+        printCell(pRtree, &rightCell, "rightCell: ");
 
         SplitRegion(pRtree, &leftCell, left, nLeft);
         SplitRegion(pRtree, &rightCell, right, nRight);
