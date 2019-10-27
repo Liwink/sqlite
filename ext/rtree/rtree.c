@@ -3010,6 +3010,9 @@ static int getSplitCut(
 
   sqlite3_free(aaSorted);
   if (*bestDim == -1) {
+    for (int kk = 0; kk < nCell; kk++) {
+      printCell(pRtree, &aCell[kk], "overlapping: ");
+    }
     return SQLITE_ERROR;
   } else {
     return SQLITE_OK;
@@ -3097,6 +3100,7 @@ static int splitNodeByCut(
       RtreeNode *cNode;
       int rc = nodeAcquire(pRtree, pCell->iRowid, pNode, &cNode);
       if (rc != SQLITE_OK) {
+        assert(false);
         return rc;
       }
 //      rc = splitNodeByCut(pRtree, aCell, nCell, dim, *cut,
@@ -3198,7 +3202,9 @@ static int SplitNodeNew(
 //    pLeft = pNode;
 //    pNode->pParent = ppLeft;
     pLeft = pNode;
-    pLeft->pParent = ppLeft;
+    pLeft->nRef++;
+    assert(pLeft->pParent == ppLeft);
+//    pLeft->pParent = ppLeft;
 //    pLeft = nodeNew(pRtree, ppLeft);
     pRight = nodeNew(pRtree, ppRight);
   } else
@@ -3304,7 +3310,7 @@ static int SplitNodeNew(
 
 //  if (xRight == NULL) {
   if (xCell != NULL) {
-    rc = nodeInsertCell(pRtree, ppLeft, &leftbbox);
+    rc = nodeInsertCell(pRtree, pLeft->pParent, &leftbbox);
   } else
   if( pNode->iNode==1 ){
     printCell(pRtree, &leftbbox, "SplitNodeNew leftbbox insert: ");
