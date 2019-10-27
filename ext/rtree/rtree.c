@@ -459,7 +459,8 @@ struct RtreeMatchArg {
 void printCell(Rtree *pRtree, RtreeCell *cell, char *header) {
   if (DEBUG == 1) {
     printf("%s", header);
-    printf("(%0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f)\n",
+    printf("%lld: {%0.0f %0.0f %0.0f %0.0f %0.0f %0.0f %0.0f %0.0f}\n",
+           cell->iRowid,
            DCOORD(cell->aCoord[0]),
            DCOORD(cell->aCoord[1]),
            DCOORD(cell->aCoord[2]),
@@ -857,7 +858,6 @@ static int nodeInsertCell(
     writeInt16(&pNode->zData[2], nCell+1);
     pNode->isDirty = 1;
   }
-  printf("done\n");
 
   return (nCell==nMaxCell);
 }
@@ -3088,6 +3088,7 @@ static int splitNodeByCut(
       cellUnion(pRtree, pBboxRight, pCell);
       printCell(pRtree, pBboxRight, "      right: ");
     } else if (iHeight == 0) {
+      // fixme: should be the first branch
       nodeInsertCell(pRtree, pLeft, pCell);
       cellUnion(pRtree, pBboxLeft, pCell);
       nodeInsertCell(pRtree, pRight, pCell);
@@ -3196,7 +3197,9 @@ static int SplitNodeNew(
   if(xCell != NULL) {
 //    pLeft = pNode;
 //    pNode->pParent = ppLeft;
-    pLeft = nodeNew(pRtree, ppLeft);
+    pLeft = pNode;
+    pLeft->pParent = ppLeft;
+//    pLeft = nodeNew(pRtree, ppLeft);
     pRight = nodeNew(pRtree, ppRight);
   } else
   if( pNode->iNode==1 ){
@@ -3301,9 +3304,9 @@ static int SplitNodeNew(
 
 //  if (xRight == NULL) {
   if (xCell != NULL) {
-    rc = nodeInsertCell(pRtree, pLeft->pParent, &leftbbox);
+    rc = nodeInsertCell(pRtree, ppLeft, &leftbbox);
   } else
-  if( pNode->iNode==1 || xCell != NULL){
+  if( pNode->iNode==1 ){
     printCell(pRtree, &leftbbox, "SplitNodeNew leftbbox insert: ");
     rc = rtreeInsertCell(pRtree, pLeft->pParent, &leftbbox, iHeight+1);
     if( rc!=SQLITE_OK ){
