@@ -235,8 +235,8 @@ struct RtreeSearchPoint {
 #define RTREE_REINSERT(p) RTREE_MINCELLS(p)
 
 // FIXME: change the RTREE_MAXCELLS for testing
-//#define RTREE_MAXCELLS 51
-#define RTREE_MAXCELLS 2
+#define RTREE_MAXCELLS 51
+//#define RTREE_MAXCELLS 2
 
 /*
 ** The smallest possible node-size is (512-64)==448 bytes. And the largest
@@ -454,12 +454,13 @@ struct RtreeMatchArg {
 #endif
 #endif
 
-#define DEBUG 1
+#define DEBUG 0
 
 void printCell(Rtree *pRtree, RtreeCell *cell, char *header) {
   if (DEBUG == 1) {
     printf("%s", header);
-    printf("(%0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f, %0.1f)\n",
+    printf("%lld: {%0.0f %0.0f %0.0f %0.0f %0.0f %0.0f %0.0f %0.0f}\n",
+           cell->iRowid,
            DCOORD(cell->aCoord[0]),
            DCOORD(cell->aCoord[1]),
            DCOORD(cell->aCoord[2]),
@@ -471,6 +472,8 @@ void printCell(Rtree *pRtree, RtreeCell *cell, char *header) {
     );
   }
 }
+
+#define REGION_SIZE 20000
 
 /*
 ** Functions to deserialize a 16 bit integer, 32 bit real number and
@@ -857,7 +860,6 @@ static int nodeInsertCell(
     writeInt16(&pNode->zData[2], nCell+1);
     pNode->isDirty = 1;
   }
-  printf("done\n");
 
   return (nCell==nMaxCell);
 }
@@ -2390,7 +2392,7 @@ static bool isValid(
   for (int i = 0; i < nCell; i++) {
     if (aaCell[i]->aCoord[dim].f >= cut) {
       *nRight += 1;
-    } else if (aaCell[i]->aCoord[dim].f <= cut) {
+    } else if (aaCell[i]->aCoord[dim+1].f <= cut) {
       *nLeft += 1;
     } else {
       return false;
@@ -2461,6 +2463,8 @@ static void SplitRegion(
             rightCell.aCoordCut[jj + 1].f = pCell->aCoordCut[jj + 1].f;
           }
         }
+        printCell(pRtree, &leftCell, "leftCell: ");
+        printCell(pRtree, &rightCell, "rightCell: ");
 
         SplitRegion(pRtree, &leftCell, left, nLeft);
         SplitRegion(pRtree, &rightCell, right, nRight);
@@ -2514,8 +2518,8 @@ static int UpdateRegion(
     for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
 //        cell.aCoordCut[ii].f = FLT_MIN;
 //        cell.aCoordCut[ii + 1].f = FLT_MAX;
-      parentCell.aCoordCut[ii].f = -10000;
-      parentCell.aCoordCut[ii + 1].f = 10000;
+      parentCell.aCoordCut[ii].f = -REGION_SIZE;
+      parentCell.aCoordCut[ii + 1].f = REGION_SIZE;
     }
   } else
 #endif
@@ -2523,8 +2527,8 @@ static int UpdateRegion(
     for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
 //        cell.aCoordCut[ii].i = INT32_MIN;
 //        cell.aCoordCut[ii + 1].i = INT32_MAX;
-      parentCell.aCoordCut[ii].i = -10000;
-      parentCell.aCoordCut[ii + 1].i = 10000;
+      parentCell.aCoordCut[ii].i = -REGION_SIZE;
+      parentCell.aCoordCut[ii + 1].i = REGION_SIZE;
     }
   }
 
@@ -3010,6 +3014,9 @@ static int getSplitCut(
 
   sqlite3_free(aaSorted);
   if (*bestDim == -1) {
+    for (int kk = 0; kk < nCell; kk++) {
+      printCell(pRtree, &aCell[kk], "overlapping: ");
+    }
     return SQLITE_ERROR;
   } else {
     return SQLITE_OK;
@@ -3088,6 +3095,7 @@ static int splitNodeByCut(
       cellUnion(pRtree, pBboxRight, pCell);
       printCell(pRtree, pBboxRight, "      right: ");
     } else if (iHeight == 0) {
+      // fixme: should be the first branch
       nodeInsertCell(pRtree, pLeft, pCell);
       cellUnion(pRtree, pBboxLeft, pCell);
       nodeInsertCell(pRtree, pRight, pCell);
@@ -3096,6 +3104,7 @@ static int splitNodeByCut(
       RtreeNode *cNode;
       int rc = nodeAcquire(pRtree, pCell->iRowid, pNode, &cNode);
       if (rc != SQLITE_OK) {
+        assert(false);
         return rc;
       }
 //      rc = splitNodeByCut(pRtree, aCell, nCell, dim, *cut,
@@ -3196,6 +3205,9 @@ static int SplitNodeNew(
   if(xCell != NULL) {
 //    pLeft = pNode;
 //    pNode->pParent = ppLeft;
+//    pLeft = pNode;
+//    pLeft->nRef++;
+//    pLeft->pParent = ppLeft;
     pLeft = nodeNew(pRtree, ppLeft);
     pRight = nodeNew(pRtree, ppRight);
   } else
@@ -3250,8 +3262,8 @@ static int SplitNodeNew(
       for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
 //        cell.aCoordCut[ii].f = FLT_MIN;
 //        cell.aCoordCut[ii + 1].f = FLT_MAX;
-        parentCell.aCoordCut[ii].f = -10000;
-        parentCell.aCoordCut[ii + 1].f = 10000;
+        parentCell.aCoordCut[ii].f = -REGION_SIZE;
+        parentCell.aCoordCut[ii + 1].f = REGION_SIZE;
       }
     } else
 #endif
@@ -3259,8 +3271,8 @@ static int SplitNodeNew(
       for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
 //        cell.aCoordCut[ii].i = INT32_MIN;
 //        cell.aCoordCut[ii + 1].i = INT32_MAX;
-        parentCell.aCoordCut[ii].i = -10000;
-        parentCell.aCoordCut[ii + 1].i = 10000;
+        parentCell.aCoordCut[ii].i = -REGION_SIZE;
+        parentCell.aCoordCut[ii + 1].i = REGION_SIZE;
       }
     }
     printCell(pRtree, &parentCell, "parentCell - root: ");
@@ -3303,7 +3315,7 @@ static int SplitNodeNew(
   if (xCell != NULL) {
     rc = nodeInsertCell(pRtree, pLeft->pParent, &leftbbox);
   } else
-  if( pNode->iNode==1 || xCell != NULL){
+  if( pNode->iNode==1 ){
     printCell(pRtree, &leftbbox, "SplitNodeNew leftbbox insert: ");
     rc = rtreeInsertCell(pRtree, pLeft->pParent, &leftbbox, iHeight+1);
     if( rc!=SQLITE_OK ){
@@ -4149,8 +4161,8 @@ static int rtreeUpdate(
       for (ii = 0; ii < pRtree->nDim2; ii += 2) {
 //        cell.aCoordCut[ii].f = FLT_MIN;
 //        cell.aCoordCut[ii + 1].f = FLT_MAX;
-        cell.aCoordCut[ii].f = -10000;
-        cell.aCoordCut[ii + 1].f = 10000;
+        cell.aCoordCut[ii].f = -REGION_SIZE;
+        cell.aCoordCut[ii + 1].f = REGION_SIZE;
       }
     } else
 #endif
@@ -4158,8 +4170,8 @@ static int rtreeUpdate(
       for (ii = 0; ii < pRtree->nDim2; ii += 2) {
 //        cell.aCoordCut[ii].i = INT32_MIN;
 //        cell.aCoordCut[ii + 1].i = INT32_MAX;
-        cell.aCoordCut[ii].i = -10000;
-        cell.aCoordCut[ii + 1].i = 10000;
+        cell.aCoordCut[ii].i = -REGION_SIZE;
+        cell.aCoordCut[ii + 1].i = REGION_SIZE;
       }
     }
 
