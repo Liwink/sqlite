@@ -235,8 +235,8 @@ struct RtreeSearchPoint {
 #define RTREE_REINSERT(p) RTREE_MINCELLS(p)
 
 // FIXME: change the RTREE_MAXCELLS for testing
-//#define RTREE_MAXCELLS 51
-#define RTREE_MAXCELLS 2
+#define RTREE_MAXCELLS 51
+//#define RTREE_MAXCELLS 2
 
 /*
 ** The smallest possible node-size is (512-64)==448 bytes. And the largest
@@ -454,7 +454,7 @@ struct RtreeMatchArg {
 #endif
 #endif
 
-#define DEBUG 1
+#define DEBUG 0
 
 void printCell(Rtree *pRtree, RtreeCell *cell, char *header) {
   if (DEBUG == 1) {
@@ -472,6 +472,8 @@ void printCell(Rtree *pRtree, RtreeCell *cell, char *header) {
     );
   }
 }
+
+#define REGION_SIZE 20000
 
 /*
 ** Functions to deserialize a 16 bit integer, 32 bit real number and
@@ -2516,8 +2518,8 @@ static int UpdateRegion(
     for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
 //        cell.aCoordCut[ii].f = FLT_MIN;
 //        cell.aCoordCut[ii + 1].f = FLT_MAX;
-      parentCell.aCoordCut[ii].f = -10000;
-      parentCell.aCoordCut[ii + 1].f = 10000;
+      parentCell.aCoordCut[ii].f = -REGION_SIZE;
+      parentCell.aCoordCut[ii + 1].f = REGION_SIZE;
     }
   } else
 #endif
@@ -2525,8 +2527,8 @@ static int UpdateRegion(
     for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
 //        cell.aCoordCut[ii].i = INT32_MIN;
 //        cell.aCoordCut[ii + 1].i = INT32_MAX;
-      parentCell.aCoordCut[ii].i = -10000;
-      parentCell.aCoordCut[ii + 1].i = 10000;
+      parentCell.aCoordCut[ii].i = -REGION_SIZE;
+      parentCell.aCoordCut[ii + 1].i = REGION_SIZE;
     }
   }
 
@@ -3203,11 +3205,10 @@ static int SplitNodeNew(
   if(xCell != NULL) {
 //    pLeft = pNode;
 //    pNode->pParent = ppLeft;
-    pLeft = pNode;
-    pLeft->nRef++;
-    assert(pLeft->pParent == ppLeft);
+//    pLeft = pNode;
+//    pLeft->nRef++;
 //    pLeft->pParent = ppLeft;
-//    pLeft = nodeNew(pRtree, ppLeft);
+    pLeft = nodeNew(pRtree, ppLeft);
     pRight = nodeNew(pRtree, ppRight);
   } else
   if( pNode->iNode==1 ){
@@ -3261,8 +3262,8 @@ static int SplitNodeNew(
       for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
 //        cell.aCoordCut[ii].f = FLT_MIN;
 //        cell.aCoordCut[ii + 1].f = FLT_MAX;
-        parentCell.aCoordCut[ii].f = -10000;
-        parentCell.aCoordCut[ii + 1].f = 10000;
+        parentCell.aCoordCut[ii].f = -REGION_SIZE;
+        parentCell.aCoordCut[ii + 1].f = REGION_SIZE;
       }
     } else
 #endif
@@ -3270,8 +3271,8 @@ static int SplitNodeNew(
       for (int ii = 0; ii < pRtree->nDim2; ii += 2) {
 //        cell.aCoordCut[ii].i = INT32_MIN;
 //        cell.aCoordCut[ii + 1].i = INT32_MAX;
-        parentCell.aCoordCut[ii].i = -10000;
-        parentCell.aCoordCut[ii + 1].i = 10000;
+        parentCell.aCoordCut[ii].i = -REGION_SIZE;
+        parentCell.aCoordCut[ii + 1].i = REGION_SIZE;
       }
     }
     printCell(pRtree, &parentCell, "parentCell - root: ");
@@ -4160,8 +4161,8 @@ static int rtreeUpdate(
       for (ii = 0; ii < pRtree->nDim2; ii += 2) {
 //        cell.aCoordCut[ii].f = FLT_MIN;
 //        cell.aCoordCut[ii + 1].f = FLT_MAX;
-        cell.aCoordCut[ii].f = -10000;
-        cell.aCoordCut[ii + 1].f = 10000;
+        cell.aCoordCut[ii].f = -REGION_SIZE;
+        cell.aCoordCut[ii + 1].f = REGION_SIZE;
       }
     } else
 #endif
@@ -4169,8 +4170,8 @@ static int rtreeUpdate(
       for (ii = 0; ii < pRtree->nDim2; ii += 2) {
 //        cell.aCoordCut[ii].i = INT32_MIN;
 //        cell.aCoordCut[ii + 1].i = INT32_MAX;
-        cell.aCoordCut[ii].i = -10000;
-        cell.aCoordCut[ii + 1].i = 10000;
+        cell.aCoordCut[ii].i = -REGION_SIZE;
+        cell.aCoordCut[ii + 1].i = REGION_SIZE;
       }
     }
 
