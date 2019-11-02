@@ -473,7 +473,7 @@ void printCell(Rtree *pRtree, RtreeCell *cell, char *header) {
   }
 }
 
-#define REGION_SIZE 20000
+#define REGION_SIZE 200000
 
 /*
 ** Functions to deserialize a 16 bit integer, 32 bit real number and
@@ -849,7 +849,6 @@ static int nodeInsertCell(
   int nCell;                    /* Current number of cells in pNode */
   int nMaxCell;                 /* Maximum number of cells for pNode */
 
-  printf("nodeInsertCell: cell(%lld) -> Node(%lld)\n", pCell->iRowid, pNode->iNode);
 
   nMaxCell = (pRtree->iNodeSize-4)/pRtree->nBytesPerCell;
   nCell = NCELL(pNode);
@@ -2359,7 +2358,6 @@ struct LinkedCell {
 };
 
 static LinkedCell* appendLinkedCell(LinkedCell *toAppend, RtreeCell *pCell) {
-  printf("appendLinkedCell\n");
   LinkedCell *nextCell = (LinkedCell*)sqlite3_malloc(sizeof(LinkedCell));
   RtreeCell *cell = sqlite3_malloc(sizeof(RtreeCell));
   memcpy(cell, pCell, sizeof(RtreeCell));
@@ -2374,7 +2372,6 @@ static void freeLinkedCell(LinkedCell *head) {
     return;
   }
   freeLinkedCell(head->next);
-  printf("freeLinkedCell\n");
   sqlite3_free(head->cell);
   sqlite3_free(head);
 }
@@ -2414,7 +2411,6 @@ static void SplitRegion(
   // init
 
   printCell(pRtree, pCell, "pCell: ");
-  printf("count: %d\n", nCell);
 
 
   if (nCell == 1) {
@@ -3005,7 +3001,6 @@ static int getSplitCut(
         *bestDim = ii;
         printCell(pRtree, &left, "getSplitCut left: ");
         printCell(pRtree, &right, "getSplitCut right: ");
-        printf("dim: %d, cut: %f, area: %f\n", ii, DCOORD(cut), area);
       }
     }
 
@@ -3039,7 +3034,6 @@ static int splitNodeByCut(
 ) {
   int ii;
   double cut = DCOORD(cutCoord);
-  printf("dim: %d, cut: %f\n", cutDim, cut);
 
 //  int isLeftEmpty = 1;
 //  int isRightEmpty = 1;
@@ -3070,8 +3064,6 @@ static int splitNodeByCut(
   pBboxLeft->aCoordCut[cutDim * 2 + 1] = cutCoord;
   pBboxRight->aCoordCut[cutDim * 2] = cutCoord;
 
-  printf("pLeft->iNode: %lld\n", pLeft->iNode);
-  printf("pRight->iNode: %lld\n", pRight->iNode);
 
   for (ii = 0; ii < nCell; ii++) {
     /*
@@ -3113,18 +3105,15 @@ static int splitNodeByCut(
 //      cNode->pParent = pLeft;
       RtreeCell cLeftCell;
       RtreeCell cRightCell;
-      printf("Before UTurn splitting: pLeft->pParent: %lld\n", pLeft->pParent->iNode);
       printCell(pRtree, pBboxLeft, "      left: ");
       printCell(pRtree, pBboxRight, "      right: ");
       SplitNodeNew(pRtree, cNode, NULL, pLeft, pRight,
               &cutCoord, cutDim, iHeight-1, pCell, &cLeftCell, &cRightCell);
       printCell(pRtree, pBboxLeft, "      left: ");
       printCell(pRtree, pBboxRight, "      right: ");
-      printf("After UTurn splitting: pLeft->pParent: %lld\n", pLeft->pParent->iNode);
 
       cellUnion(pRtree, pBboxLeft, &cLeftCell);
       cellUnion(pRtree, pBboxRight, &cRightCell);
-      printf("done split turnaround\n");
       nodeRelease(pRtree, cNode);
     }
 //    printf("%d.\n", ii);
@@ -3242,7 +3231,6 @@ static int SplitNodeNew(
       goto splitnode_out;
     }
   } else {
-    printf("using parent's cut\n");
   }
 
   RtreeCell parentCell;
@@ -3805,7 +3793,6 @@ static int rtreeInsertCellNew(
   }
 
   if( nodeContainsCell(pRtree, pNode, pCell) ) {
-      printf("contains Cell");
       return rc;
   }
 
@@ -3845,7 +3832,6 @@ static int rtreeInsertCell(
   int iHeight
 ){
   int rc = SQLITE_OK;
-  printf("rtreeInsertCell: cell(%lld) -> Node(%lld)\n", pCell->iRowid, pNode->iNode);
   if( iHeight>0 ){
     RtreeNode *pChild = nodeHashLookup(pRtree, pCell->iRowid);
     if( pChild ){
