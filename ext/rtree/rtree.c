@@ -172,7 +172,11 @@ struct Rtree {
   /* Statement for writing to the "aux:" fields, if there are any */
   sqlite3_stmt *pWriteAux;
 
-  RtreeNode *aHash[HASHSIZE]; /* Hash table of in-memory nodes. */ 
+  RtreeNode *aHash[HASHSIZE]; /* Hash table of in-memory nodes. */
+
+  i64 countSplit;
+  i64 countUTurnSplit;
+  i64 countPageAcquire;
 };
 
 /* Possible values for Rtree.eCoordType: */
@@ -695,6 +699,10 @@ static int nodeAcquire(
 ){
   int rc = SQLITE_OK;
   RtreeNode *pNode = 0;
+  pRtree->countPageAcquire += 1;
+  if (DEBUG) {
+    printf("countPageAcquire: %lld\n", pRtree->countPageAcquire);
+  }
 
   /* Check if the requested node is already in the hash table. If so,
   ** increase its reference count and return it.
@@ -2473,7 +2481,7 @@ static void SplitRegion(
       }
     }
   }
-  printf("ERROR: no valid split!!!!\n");
+//  printf("ERROR: no valid split!!!!\n");
 
 }
 
@@ -3159,6 +3167,15 @@ static int SplitNodeNew(
 ){
   int i;
   int newCellIsRight = 0;
+
+  pRtree->countSplit += 1;
+  if (xCell != NULL) {
+    pRtree->countUTurnSplit += 1;
+  }
+  if (DEBUG) {
+    printf("countSplit: %lld\n", pRtree->countSplit);
+    printf("countUTurnSplit: %lld\n", pRtree->countUTurnSplit);
+  }
 
   int rc = SQLITE_OK;
   int nCell = NCELL(pNode);
