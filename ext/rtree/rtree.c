@@ -2226,7 +2226,12 @@ static RtreeDValue cellCutOverlap(
         o = (RtreeDValue)0;
         break;
       }else{
-        o = o * (x2-x1);
+        if(x1 == x2 && DCOORD(aCell[ii].aCoord[jj]) == DCOORD(aCell[ii].aCoord[jj+1])) {
+          o = (RtreeDValue)1;
+        }
+        else {
+          o = o * (x2-x1);
+        }
       }
     }
     overlap += o;
